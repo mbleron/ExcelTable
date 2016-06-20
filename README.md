@@ -5,8 +5,13 @@ It is entirely implemented in PL/SQL using an object type (for the ODCI routines
 
 ## Bug tracker
 
+<<<<<<< HEAD
 Found bugs? I'm sure there are...  
 Please create an issue here on GitHub at <https://github.com/mbleron/oracle/issues>.
+=======
+Found bugs? I'm sure there are...
+Please create an issue here on GitHub at <https://github.com/mbleron/oracle/ExcelTable>.
+>>>>>>> origin/master
 
 ## Installation
 
@@ -16,6 +21,7 @@ Therefore, the owner must be granted the necessary privilege in order to compile
 grant select on sys.v_$parameter to <user>;
 ```
 
+<<<<<<< HEAD
 Then, in this order : 
 ```
 @ExcelTableImpl.tps
@@ -24,6 +30,8 @@ Then, in this order :
 ```
 
 
+=======
+>>>>>>> origin/master
 ## Usage
 
 ```sql
@@ -40,8 +48,13 @@ using ExcelTableImpl;
 * `p_file` : Input Excel file in Office Open XML format (.xlsx or .xlsm).
 A helper function `ExcelTable.getFile` is available to directly reference the file from a directory.
 * `p_sheet` : Worksheet name
+<<<<<<< HEAD
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
+=======
+* `p_cols` : Column list (see [specs](#colspecs) below)
+* `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#rangespecs) below)
+>>>>>>> origin/master
 
 #### <a name="colspecs"></a> Columns syntax specification
 
@@ -49,6 +62,7 @@ Column names must be declared using a quoted identifier.
 
 Supported data types are :
 
+<<<<<<< HEAD
 * NUMBER – with optional precision and scale specs.
 
 * VARCHAR2 – including CHAR/BYTE semantics. Values larger than the maximum length declared are silently truncated and no error is reported.
@@ -58,6 +72,17 @@ Supported data types are :
 * CLOB
 
 A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE’s one) is also available to autogenerate a sequence number.
+=======
+* NUMBER â€“ with optional precision and scale specs.
+
+* VARCHAR2 â€“ including CHAR/BYTE semantics. Values larger than the maximum length declared are silently truncated and no error is reported.
+
+* DATE â€“ with optional format mask. The format mask is used if the value is stored as text in the spreadsheet, otherwise the date value is assumed to be stored as date in Excelâ€™s internal serial format.
+
+* CLOB
+
+A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLEâ€™s one) is also available to autogenerate a sequence number.
+>>>>>>> origin/master
 
 Each column definition (except for the one qualified with FOR ORDINALITY) may be complemented with an optional "COLUMN" clause to explicitly target a named column in the spreadsheet, instead of relying on the order of the declarations (relative to the range).
 Positional and named column definitions cannot be mixed.
@@ -80,6 +105,7 @@ or,
 , "COL3"  clob          column 'D'
 ```
 
+<<<<<<< HEAD
 
 #### Range syntax specification
 
@@ -87,12 +113,21 @@ There are four ways to specify the table range :
 
 * Range of rows : `'1:100'` – in this case the range of columns implicitly starts at A.
 * Range of columns : `'B:E'` – in this case the range of rows implicitly starts at 1.
+=======
+#### <a name="rangespecs"></a> Range syntax specification
+
+There are four ways to specify the table range :
+
+* Range of rows : `'1:100'` â€“ in this case the range of columns implicitly starts at A.
+* Range of columns : `'B:E'` â€“ in this case the range of rows implicitly starts at 1.
+>>>>>>> origin/master
 * Range of cells (top-left to bottom-right) : `'B2:F150'`
 * Single cell anchor (top-left cell) : `'C3'`
 
 > If the range is empty, the table implicitly starts at cell A1.
 
 
+<<<<<<< HEAD
 ### Examples
 
 Given this sample file : [ooxdata3.xlsx](./ooxdata3.xlsx)
@@ -142,6 +177,11 @@ from table(
 TBD
 
 
+=======
+## Author
+
+**Marc Bleron**
+>>>>>>> origin/master
 
 ## Copyright and license
 
