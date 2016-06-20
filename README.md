@@ -43,7 +43,7 @@ A helper function `ExcelTable.getFile` is available to directly reference the fi
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
 
-#### <a name="colspecs"></a> Columns syntax specification
+#### Columns syntax specification
 
 Column names must be declared using a quoted identifier.
 

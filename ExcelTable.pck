@@ -118,10 +118,10 @@ create or replace package body ExcelTable is
   DIGITS                 constant varchar2(10) := '0123456789';
   LETTERS                constant varchar2(26) := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   
-	INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
-	UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
+  INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
+  UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
   UNEXPECTED_SYMBOL      constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s''';
-	UNEXPECTED_INSTEAD_OF  constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s'' instead of ''%s''';
+  UNEXPECTED_INSTEAD_OF  constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s'' instead of ''%s''';
   UNSUPPORTED_DATATYPE   constant varchar2(100) := 'Unknown or unsupported data type : %s';
   RANGE_EMPTY_REF        constant varchar2(100) := 'Range error : empty reference';
   RANGE_INVALID_REF      constant varchar2(100) := 'Range error : invalid reference ''%s''';
