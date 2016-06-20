@@ -31,19 +31,21 @@ create or replace package ExcelTable is
   /*
   EBNF grammar for the range_expr and column_list expression
 
-    range_expr     ::= ( cell_ref [ ":" cell_ref ] | col_ref ":" col_ref | row_ref ":" row_ref )
-    cell_ref       ::= col_ref row_ref
-    col_ref        ::= [A-Z]+
-    row_ref        ::= integer
+    range_expr ::= ( cell_ref [ ":" cell_ref ] | col_ref ":" col_ref | row_ref ":" row_ref )
+    cell_ref   ::= col_ref row_ref
+    col_ref    ::= { "A".."Z" }
+    row_ref    ::= integer
   
     column_list    ::= column_expr { "," column_expr }
-    column_expr    ::= identifier datatype [ "column" string_literal ]
+    column_expr    ::= ( identifier datatype [ "column" string_literal ] | identifier for_ordinality )
     datatype       ::= ( number_expr | varchar2_expr | date_expr | clob_expr | for_ordinality )
     number_expr    ::= "number" [ "(" ( integer | "*" ) [ "," integer ] ")" ]
     varchar2_expr  ::= "varchar2" "(" integer [ "char" | "byte" ] ")"
     date_expr      ::= "date" [ "format" string_literal ]
     clob_expr      ::= "clob"
     for_ordinality ::= "for" "ordinality"
+    identifier     ::= "\"" { char } "\""
+    string_literal ::= "'" { char } "'"
   
   */
   

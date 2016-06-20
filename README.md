@@ -5,8 +5,8 @@ It is entirely implemented in PL/SQL using an object type (for the ODCI routines
 
 ## Bug tracker
 
-Found bugs? I'm sure there are...
-Please create an issue here on GitHub at <https://github.com/mbleron/oracle/ExcelTable>.
+Found bugs? I'm sure there are...  
+Please create an issue here on GitHub at <https://github.com/mbleron/oracle/issues>.
 
 ## Installation
 
@@ -15,6 +15,14 @@ Therefore, the owner must be granted the necessary privilege in order to compile
 ```sql
 grant select on sys.v_$parameter to <user>;
 ```
+
+Then, in this order : 
+```
+@ExcelTableImpl.tps
+@ExcelTable.pck
+@ExcelTableImpl.tpb
+```
+
 
 ## Usage
 
@@ -87,7 +95,7 @@ There are four ways to specify the table range :
 
 ### Examples
 
-Given this sample file : 
+Given this sample file : [ooxdata3.xlsx](./ooxdata3.xlsx)
 
 * Loading all six columns, starting at cell A2, in order to skip the header :
 
@@ -129,10 +137,11 @@ from table(
 ```
 
 
+## CHANGELOG
 
-## Author
+TBD
 
-**Marc Bleron**
+
 
 ## Copyright and license
 
