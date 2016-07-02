@@ -139,7 +139,14 @@ from table(
 
 ## CHANGELOG
 
-TBD
+### 1.1 (2016-06-25)
+
+* Added internal collection and LOB freeing
+
+
+### 1.0 (2016-05-01)
+
+* Creation
 
 
 

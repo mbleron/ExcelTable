@@ -26,6 +26,8 @@ create or replace package ExcelTable is
 =========================================================================================
     Change history :
     Marc Bleron       2016-05-01     Creation
+    Marc Bleron       2016-06-25     Added string_cache.delete on tableClose
+                                     Added lob freeing
 ====================================================================================== */
   
   /*
@@ -118,10 +120,10 @@ create or replace package body ExcelTable is
   DIGITS                 constant varchar2(10) := '0123456789';
   LETTERS                constant varchar2(26) := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   
-  INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
-  UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
+	INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
+	UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
   UNEXPECTED_SYMBOL      constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s''';
-  UNEXPECTED_INSTEAD_OF  constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s'' instead of ''%s''';
+	UNEXPECTED_INSTEAD_OF  constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s'' instead of ''%s''';
   UNSUPPORTED_DATATYPE   constant varchar2(100) := 'Unknown or unsupported data type : %s';
   RANGE_EMPTY_REF        constant varchar2(100) := 'Range error : empty reference';
   RANGE_INVALID_REF      constant varchar2(100) := 'Range error : invalid reference ''%s''';
@@ -1139,6 +1141,7 @@ from xmltable(
     OX_loadStringCache (l_xldoc);
     l_sheet := Zip_getXML(l_xldoc.file, OX_getPathBySheetName(l_xldoc, p_sheet));
     l_doc := dbms_xmldom.newDOMDocument(l_sheet);
+    dbms_lob.freetemporary(l_xldoc.file.content);
     return l_doc.id;
   end;
 
@@ -1452,6 +1455,7 @@ from xmltable(
     l_nlist.id := p_ctx_id;
     dbms_xmldom.freeNodeList(l_nlist);
     dbms_xmldom.freeDocument(l_doc);
+    string_cache.delete;
   end;
 
 
