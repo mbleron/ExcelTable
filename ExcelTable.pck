@@ -120,10 +120,10 @@ create or replace package body ExcelTable is
   DIGITS                 constant varchar2(10) := '0123456789';
   LETTERS                constant varchar2(26) := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   
-	INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
-	UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
+  INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
+  UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
   UNEXPECTED_SYMBOL      constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s''';
-	UNEXPECTED_INSTEAD_OF  constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s'' instead of ''%s''';
+  UNEXPECTED_INSTEAD_OF  constant varchar2(100) := 'Error at position %d : unexpected symbol ''%s'' instead of ''%s''';
   UNSUPPORTED_DATATYPE   constant varchar2(100) := 'Unknown or unsupported data type : %s';
   RANGE_EMPTY_REF        constant varchar2(100) := 'Range error : empty reference';
   RANGE_INVALID_REF      constant varchar2(100) := 'Range error : invalid reference ''%s''';
@@ -480,15 +480,15 @@ create or replace package body ExcelTable is
   begin
     MAX_STRING_SIZE := get_max_string_size();  
   
-	  token_map(T_NAME)   := '<name>';
-	  token_map(T_INT)    := '<integer>';
-	  token_map(T_IDENT)  := '<identifier>';
+    token_map(T_NAME)   := '<name>';
+    token_map(T_INT)    := '<integer>';
+    token_map(T_IDENT)  := '<identifier>';
     token_map(T_STRING) := '<string literal>';
     token_map(T_EOF)    := '<eof>';
     token_map(T_COMMA)  := ',';
     token_map(T_LEFT)   := '(';
     token_map(T_RIGHT)  := ')';
-	end;
+  end;
 
   
   procedure error (
@@ -639,8 +639,6 @@ create or replace package body ExcelTable is
       end case;
       
     end if;
-    
-    --dbms_output.put_line('['||to_char(token.pos,'fm099')||'] '||to_char(token.type,'99')||' '||token.strval);
     
     return token;
   
@@ -793,7 +791,7 @@ create or replace package body ExcelTable is
       end if;
     end;
     
-	  -- column_expr    ::= identifier datatype
+    -- column_expr    ::= identifier datatype
     procedure column_expr (p_columns in out nocopy QI_column_list_t)
     is
       intval  binary_integer;
