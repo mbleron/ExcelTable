@@ -6,6 +6,7 @@ create or replace type body ExcelTableImpl as
   , p_sheet  in  varchar2
   , p_cols   in  varchar2
   , p_range  in  varchar2 default null
+  , p_method in  binary_integer default 0
   )
   return number
   is
@@ -25,18 +26,15 @@ create or replace type body ExcelTableImpl as
   , p_sheet  in  varchar2
   , p_cols   in  varchar2
   , p_range  in  varchar2 default null
+  , p_method in  binary_integer default 0
   )
   return number
   is
   begin
-    
-    --dbms_output.put_line('ODCITablePrepare');
 
     sctx := ExcelTableImpl(
               ExcelTable.tablePrepare(tf_info)
             , null
-            , null
-            , 0
             , 0
             ) ;
 
@@ -50,15 +48,15 @@ create or replace type body ExcelTableImpl as
   , p_file   in blob
   , p_sheet  in varchar2
   , p_cols   in varchar2
-  , p_range  in  varchar2 default null
+  , p_range  in varchar2 default null
+  , p_method in binary_integer default 0
   )
   return number
   is
   begin
-
-    --dbms_output.put_line('ODCITableStart');
-    ExcelTable.tableStart(p_file, p_sheet, p_range, p_cols, sctx.doc_id, sctx.ctx_id);
-
+    
+    ExcelTable.tableStart(p_file, p_sheet, p_range, p_cols, p_method, sctx.ctx_id);
+    
     return ODCIConst.SUCCESS;
     
   end ODCITableStart;
@@ -73,12 +71,9 @@ create or replace type body ExcelTableImpl as
   is
   begin
     
-    --dbms_output.put_line('ODCITableFetch : '||nrows);
-    
     ExcelTable.tableFetch(
       self.atype 
     , self.ctx_id
-    , self.r_num
     , self.done
     , nrows
     , rws
@@ -94,8 +89,7 @@ create or replace type body ExcelTableImpl as
   is
   begin
    
-    --dbms_output.put_line('ODCITableClose');
-    ExcelTable.tableClose(self.doc_id, self.ctx_id);
+    ExcelTable.tableClose(self.ctx_id);
     
     return ODCIConst.SUCCESS;
     

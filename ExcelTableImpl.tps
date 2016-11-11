@@ -26,12 +26,12 @@ create or replace type ExcelTableImpl as object (
 =========================================================================================
     Change history :
     Marc Bleron       2016-05-01     Creation
+    Marc Bleron       2016-10-19     Removed doc_id attribute, 
+                                     changed ctx_id to integer data type
 ====================================================================================== */
 
    atype     anytype
- , doc_id    raw(13)
- , ctx_id    raw(13)
- , r_num     integer
+ , ctx_id    integer
  , done      integer
 
  , static function ODCITableDescribe(
@@ -40,6 +40,7 @@ create or replace type ExcelTableImpl as object (
    , p_sheet  in  varchar2
    , p_cols   in  varchar2
    , p_range  in  varchar2 default null
+   , p_method in  binary_integer default 0
    ) 
    return number
 
@@ -50,6 +51,7 @@ create or replace type ExcelTableImpl as object (
    , p_sheet  in  varchar2
    , p_cols   in  varchar2
    , p_range  in  varchar2 default null
+   , p_method in  binary_integer default 0
    )
    return number
 
@@ -59,6 +61,7 @@ create or replace type ExcelTableImpl as object (
    , p_sheet  in varchar2
    , p_cols   in varchar2
    , p_range  in varchar2 default null
+   , p_method in binary_integer default 0
    ) 
    return number
 

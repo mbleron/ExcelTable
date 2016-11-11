@@ -3,6 +3,9 @@
 ExcelTable is a pipelined table interface to read an Excel file (.xlsx or .xlsm) as if it were an external table.
 It is entirely implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
+> As of version 1.2, a streaming implementation is available for better scalability on large files. 
+> This feature requires the server-side Java VM.
+
 ## Bug tracker
 
 Found bugs? I'm sure there are...  
@@ -10,19 +13,64 @@ Please create an issue here on GitHub at <https://github.com/mbleron/oracle/issu
 
 ## Installation
 
+### Database requirement
+
+ExcelTable requires Oracle Database 11\.2\.0\.2 and onwards.
+> Note that the interface may work as well on version 11\.1\.0\.6, 11\.1\.0\.7 and 11\.2\.0\.1, with limited support for CLOB projections, but that scenario has not been tested.
+
+### DBA preliminary tasks
+
 ExcelTable package needs read access to V$PARAMETER view internally to retrieve the value of the `max_string_size` parameter.
 Therefore, the owner must be granted the necessary privilege in order to compile and run the program : 
 ```sql
 grant select on sys.v_$parameter to <user>;
 ```
 
-Then, in this order : 
+On versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally.
+The owner requires the CREATE TABLE privilege in this case : 
+```sql
+grant create table to <user>;
 ```
+
+
+### PL/SQL
+
+Create the following objects, in this order : 
+```
+@ExcelTableCell.tps
+@ExcelTableCellList.tps
 @ExcelTableImpl.tps
-@ExcelTable.pck
+@ExcelTable.pks
+@ExcelTable.pkb
 @ExcelTableImpl.tpb
 ```
 
+### Java
+
+If you want to use the streaming method, some Java classes - packed in a jar file - have to be deployed in the database.  
+The jar files to deploy depend on the database version.
+
+* Versions < 11\.2\.0\.4  
+Except for version 11\.2\.0\.4 which supports JDK 6, Oracle 11g only supports JDK 5 (Java 1.5).
+Load the following jar files in order to use the streaming method : 
+  + stax-api-1.0-2.jar  
+  + sjsxp-1.0.2.jar  
+  + exceldbtools-1.5.jar
+
+```
+loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/stax-api-1.0-2.jar
+loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/sjsxp-1.0.2.jar
+loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.5.jar
+```
+
+
+* Versions >= 11\.2\.0\.4  
+The StAX API is included in JDK 6, as well as the Sun Java implementation (SJXSP), so for those versions one only needs to load the following jar file :  
+  + exceldbtools-1.6.jar
+
+```
+loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
+```
 
 ## Usage
 
@@ -32,6 +80,7 @@ function getRows (
 , p_sheet  in  varchar2
 , p_cols   in  varchar2
 , p_range  in  varchar2 default null
+, p_method in  binary_integer default DOM_READ
 ) 
 return anydataset pipelined
 using ExcelTableImpl;
@@ -42,6 +91,17 @@ A helper function `ExcelTable.getFile` is available to directly reference the fi
 * `p_sheet` : Worksheet name
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
+* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1)
+  
+  
+New in version 1.2
+```sql
+procedure setFetchSize (p_nrows in number);
+```
+Use setFetchSize() to control the number of rows returned by each invocation of the ODCITableFetch method.  
+If the number of rows requested by the client is greater than the fetch size, the fetch size is used instead.  
+The default fetch size is 100.
+
 
 #### Columns syntax specification
 
@@ -138,6 +198,10 @@ from table(
 
 
 ## CHANGELOG
+### 1.2 (2016-10-30)
+
+* Added new streaming read method
+* Added setFetchSize() procedure
 
 ### 1.1 (2016-06-25)
 
