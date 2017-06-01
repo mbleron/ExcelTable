@@ -1,12 +1,13 @@
 create or replace type body ExcelTableImpl as
 
   static function ODCITableDescribe (
-    rtype    out anytype
-  , p_file   in  blob
-  , p_sheet  in  varchar2
-  , p_cols   in  varchar2
-  , p_range  in  varchar2 default null
-  , p_method in  binary_integer default 0
+    rtype      out anytype
+  , p_file     in  blob
+  , p_sheet    in  varchar2
+  , p_cols     in  varchar2
+  , p_range    in  varchar2 default null
+  , p_method   in  binary_integer default 0
+  , p_password in varchar2 default null
   )
   return number
   is
@@ -20,13 +21,14 @@ create or replace type body ExcelTableImpl as
   
 
   static function ODCITablePrepare (
-    sctx     out ExcelTableImpl
-  , tf_info  in  sys.ODCITabFuncInfo
-  , p_file   in  blob
-  , p_sheet  in  varchar2
-  , p_cols   in  varchar2
-  , p_range  in  varchar2 default null
-  , p_method in  binary_integer default 0
+    sctx       out ExcelTableImpl
+  , tf_info    in  sys.ODCITabFuncInfo
+  , p_file     in  blob
+  , p_sheet    in  varchar2
+  , p_cols     in  varchar2
+  , p_range    in  varchar2 default null
+  , p_method   in  binary_integer default 0
+  , p_password in varchar2 default null
   )
   return number
   is
@@ -44,18 +46,19 @@ create or replace type body ExcelTableImpl as
   
 
   static function ODCITableStart (
-    sctx     in out ExcelTableImpl
-  , p_file   in blob
-  , p_sheet  in varchar2
-  , p_cols   in varchar2
-  , p_range  in varchar2 default null
-  , p_method in binary_integer default 0
+    sctx       in out ExcelTableImpl
+  , p_file     in blob
+  , p_sheet    in varchar2
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default 0
+  , p_password in varchar2 default null
   )
   return number
   is
   begin
     
-    ExcelTable.tableStart(p_file, p_sheet, p_range, p_cols, p_method, sctx.ctx_id);
+    ExcelTable.tableStart(p_file, p_sheet, p_range, p_cols, p_method, sctx.ctx_id, p_password);
     
     return ODCIConst.SUCCESS;
     

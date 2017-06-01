@@ -37,6 +37,9 @@ create or replace package body ExcelTable is
   INVALID_COL            constant varchar2(100) := 'Column out of range ''%s''';
   DUPLICATE_COL_REF      constant varchar2(100) := 'Duplicate column references found';
 
+  -- File type
+  SIGNATURE_OPC          constant binary_integer := 0;
+  SIGNATURE_CDF          constant binary_integer := 1;
   -- OOX Constants
   RS_OFFICEDOC           constant varchar2(100) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
   --CT_STYLES              constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
@@ -199,6 +202,19 @@ create or replace package body ExcelTable is
     return l_list;
   end;
   
+  
+  function checkSignature (p_file in blob)
+  return binary_integer
+  is
+    output  binary_integer;
+  begin
+    if dbms_lob.substr(p_file, 4) = hextoraw('504B0304') then
+      output := SIGNATURE_OPC;
+    elsif dbms_lob.substr(p_file, 8) = hextoraw('D0CF11E0A1B11AE1') then
+      output := SIGNATURE_CDF;
+    end if;
+    return output;
+  end;
    
   -- ----------------------------------------------------------------------------------------------
   -- Open a zip archive and read entries from central directory segment
@@ -1165,7 +1181,7 @@ create or replace package body ExcelTable is
 
   procedure OX_openWorkbook (
     p_doc   in out nocopy t_exceldoc
-  , p_file  in  blob
+  , p_file  in blob
   ) 
   is
   begin
@@ -1323,27 +1339,46 @@ create or replace package body ExcelTable is
 
 
   procedure tableStart (
-    p_file   in  blob
-  , p_sheet  in  varchar2
-  , p_range  in  varchar2
-  , p_cols   in  varchar2
-  , p_method in  binary_integer
-  , p_ctx_id out binary_integer
+    p_file     in  blob
+  , p_sheet    in  varchar2
+  , p_range    in  varchar2
+  , p_cols     in  varchar2
+  , p_method   in  binary_integer
+  , p_ctx_id   out binary_integer
+  , p_password in  varchar2
   )  
   is
-    idx  binary_integer;
+    ctx_id     binary_integer;
+    signature  binary_integer := checkSignature(p_file);
+    opc_file   blob;  
   begin
+
+    case signature
+    when SIGNATURE_OPC then
+      opc_file := p_file;
+      
+    when SIGNATURE_CDF then
+      if p_password is not null then
+        execute immediate 'call xutl_offcrypto.get_package(:1,:2) into :3'
+        using in p_file, in p_password, out opc_file;        
+      else
+        raise_application_error(-20721, 'Input file appears to be encrypted');
+      end if;
+      
+    else
+      raise_application_error(-20720, 'Input file does not appear to be a valid Open Office document');
+    end case;
     
-    idx := nvl(ctx_cache.last, 0) + 1;
-    ctx_cache(idx).read_method := p_method;
-    ctx_cache(idx).def_cache := QI_parseTable(p_range, p_cols);
-    ctx_cache(idx).r_num := 0;
-    ctx_cache(idx).ws_rlist_idx := 0;
+    ctx_id := nvl(ctx_cache.last, 0) + 1;
+    ctx_cache(ctx_id).read_method := p_method;
+    ctx_cache(ctx_id).def_cache := QI_parseTable(p_range, p_cols);
+    ctx_cache(ctx_id).r_num := 0;
+    ctx_cache(ctx_id).ws_rlist_idx := 0;
     
     set_nls_cache;
-    OX_openWorksheet(p_file, p_sheet, idx);
+    OX_openWorksheet(opc_file, p_sheet, ctx_id);
     
-    p_ctx_id := idx;
+    p_ctx_id := ctx_id;
         
   end;
   
@@ -1422,6 +1457,7 @@ create or replace package body ExcelTable is
           if l_col member of l_colset then
             l_empty_row := false;
             cells(l_col) := l_n;
+            --dbms_output.put_line(l_col);
           end if;
         end loop;
         l_n := null;
@@ -1444,6 +1480,7 @@ create or replace package body ExcelTable is
             l_clob := null;
 
             l_col := l_cols(i).metadata.col_ref;
+            --dbms_output.put_line(l_col);
             if cells.exists(l_col) then
             
               l_n := cells(l_col);  
@@ -1457,10 +1494,12 @@ create or replace package body ExcelTable is
               end;
               
               l_type := dbms_xslprocessor.valueOf(l_n, '@t');
-              
+              --dbms_output.put_line('l_type='||l_type);
+              --dbms_output.put_line('l_val='||l_val);
               -- -------------------------------------------------
               if l_type = 's' then
                 l_varchar2 := get_string_val(p_ctx_id, l_val);
+                --dbms_output.put_line('l_varchar2='||l_varchar2);
               elsif l_type = 'inlineStr' then
                 -- read inline string value
                 begin
@@ -1482,6 +1521,7 @@ create or replace package body ExcelTable is
                 l_varchar2 := dbms_lob.substr(l_clob, LOB_CHUNK_SIZE);
               end if;
               l_varchar2 := substrb(l_varchar2, 1, l_cols(i).metadata.len);
+              --dbms_output.put_line('l_varchar2='||l_varchar2);
               rws.setVarchar2(l_varchar2);
               
             when dbms_types.TYPECODE_NUMBER then
@@ -1722,7 +1762,9 @@ create or replace package body ExcelTable is
       
       dbms_xmldom.freeNodeList(l_ctx.ws_rlist);
       dbms_xmldom.freeDocument(l_ctx.ws_doc);
-      l_ctx.string_cache.delete;
+      if l_ctx.string_cache is not null then
+        l_ctx.string_cache.delete;
+      end if;
       
     when STREAM_READ then
       
@@ -1747,7 +1789,7 @@ create or replace package body ExcelTable is
     l_file         bfile := bfilename(p_directory, p_filename);
     l_blob         blob;
   begin
-    dbms_lob.createtemporary(l_blob, false);
+    dbms_lob.createtemporary(l_blob, true);
     dbms_lob.fileopen(l_file, dbms_lob.file_readonly);
     dbms_lob.loadblobfromfile(
       dest_lob    => l_blob

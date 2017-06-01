@@ -6,6 +6,8 @@ It is entirely implemented in PL/SQL using an object type (for the ODCI routines
 > As of version 1.2, a streaming implementation is available for better scalability on large files. 
 > This feature requires the server-side Java VM.
 
+> As of version 1.3, ExcelTable can read password-encrypted files.
+
 ## Bug tracker
 
 Found bugs? I'm sure there are...  
@@ -32,6 +34,12 @@ The owner requires the CREATE TABLE privilege in this case :
 grant create table to <user>;
 ```
 
+In version 1.3, accessing encrypted Excel files requires some additional dependencies based on DBMS_CRYPTO API (see PL/SQL section below).  
+The owner must therefore be granted EXECUTE privilege on it : 
+```sql
+grant execute on sys.dbms_crypto to <user>;
+```
+
 
 ### PL/SQL
 
@@ -44,6 +52,19 @@ Create the following objects, in this order :
 @ExcelTable.pkb
 @ExcelTableImpl.tpb
 ```
+
+Add the following (soft) dependencies in order to use the crytographic features : 
+
+[XUTL_CDF](../CDFReader) : CFBF (OLE2) file reader  
+[XUTL_OFFCRYPTO](../OfficeCrypto) : Office crypto routines
+
+```
+@xutl_cdf.pks
+@xutl_cdf.pkb
+@xutl_offcryto.pks
+@xutl_offcrypto.pkb
+```
+
 
 ### Java
 
@@ -76,11 +97,12 @@ loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
 
 ```sql
 function getRows (
-  p_file   in  blob
-, p_sheet  in  varchar2
-, p_cols   in  varchar2
-, p_range  in  varchar2 default null
-, p_method in  binary_integer default DOM_READ
+  p_file     in blob
+, p_sheet    in varchar2
+, p_cols     in varchar2
+, p_range    in varchar2 default null
+, p_method   in binary_integer default DOM_READ
+, p_password in varchar2 default null
 ) 
 return anydataset pipelined
 using ExcelTableImpl;
@@ -92,6 +114,7 @@ A helper function `ExcelTable.getFile` is available to directly reference the fi
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
 * `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1)
+* `p_password` : Optional - password used to encrypt the Excel document
   
   
 New in version 1.2
@@ -153,9 +176,27 @@ There are four ways to specify the table range :
 > If the range is empty, the table implicitly starts at cell A1.
 
 
+#### Cryptographic features overview
+
+By default, password-protected Office files use AES encryption : 
+
+| Office version  | Method  | Encryption | Hash algorithm | Block chaining  
+| :-------------- | :-----  | :--------- | :------------- | :-------------
+| 2007            | Standard| AES-128    | SHA-1          | ECB
+| 2010            | Agile   | AES-128    | SHA-1          | CBC
+| 2013            | Agile   | AES-256    | SHA512         | CBC
+| 2016            | Agile   | AES-256    | SHA512         | CBC
+
+Oracle, through DBMS_CRYPTO API, only supports SHA-2 algorithms (SHA256, 384, 512) starting from 12c.  
+Therefore, in prior versions, the [OfficeCrypto](../OfficeCrypto) implementation cannot read Office 2013 (and onwards) documents encrypted with the default options.  
+
+Full specs available on MSDN : [[MS-OFFCRYPTO]](https://msdn.microsoft.com/en-us/library/cc313071)  
+
+
+
 ### Examples
 
-Given this sample file : [ooxdata3.xlsx](./ooxdata3.xlsx)
+Given this sample file : [ooxdata3.xlsx](./samples/ooxdata3.xlsx)
 
 * Loading all six columns, starting at cell A2, in order to skip the header :
 
@@ -196,8 +237,38 @@ from table(
 ;
 ```
 
+* Loading column C, starting at row 5, from a password-encrypted workbook ([crypto2016.xlsx](./samples/crypto2016.xlsx)) : 
+
+```
+SQL> select *
+  2  from table(
+  3         ExcelTable.getRows(
+  4           ExcelTable.getFile('TMP_DIR','crypto2016.xlsx')
+  5         , 'Feuil1'
+  6         , '"COL1" number'
+  7         , 'C5'
+  8         , 0
+  9         , p_password => 'AZE'
+ 10         )
+ 11       )
+ 12  ;
+ 
+      COL1
+----------
+         1
+         2
+         3
+ 
+```  
+
+
 
 ## CHANGELOG
+### 1.3 (2017-05-30)
+
+* Added support for password-encrypted files
+* Fixed minor bugs
+
 ### 1.2 (2016-10-30)
 
 * Added new streaming read method
@@ -216,4 +287,4 @@ from table(
 
 ## Copyright and license
 
-Copyright 2016 Marc Bleron. Released under MIT license.
+Copyright 2016,2017 Marc Bleron. Released under MIT license.

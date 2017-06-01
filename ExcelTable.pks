@@ -3,7 +3,7 @@ create or replace package ExcelTable is
 
   MIT License
 
-  Copyright (c) 2016 Marc Bleron
+  Copyright (c) 2016,2017 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -32,6 +32,8 @@ create or replace package ExcelTable is
     Marc Bleron       2016-10-30     New streaming read method for large files (requires 
                                      Java)
                                      Added setFetchSize() procedure
+    Marc Bleron       2017-05-14     Fixed ORA-06531 when file has no sharedStrings
+    Marc Bleron       2017-05-28     Added support for password-encrypted workbooks
 ====================================================================================== */
 
   -- Read methods  
@@ -62,11 +64,12 @@ create or replace package ExcelTable is
   */
   
   function getRows (
-    p_file   in  blob
-  , p_sheet  in  varchar2
-  , p_cols   in  varchar2
-  , p_range  in  varchar2 default null
-  , p_method in  binary_integer default DOM_READ
+    p_file     in blob
+  , p_sheet    in varchar2
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default DOM_READ
+  , p_password in varchar2 default null
   ) 
   return anydataset pipelined
   using ExcelTableImpl;
@@ -83,12 +86,13 @@ create or replace package ExcelTable is
   return anytype;
 
   procedure tableStart (
-    p_file   in  blob
-  , p_sheet  in  varchar2
-  , p_range  in  varchar2
-  , p_cols   in  varchar2
-  , p_method in  binary_integer
-  , p_ctx_id out binary_integer
+    p_file     in  blob
+  , p_sheet    in  varchar2
+  , p_range    in  varchar2
+  , p_cols     in  varchar2
+  , p_method   in  binary_integer
+  , p_ctx_id   out binary_integer
+  , p_password in  varchar2
   );
 
   procedure tableFetch(

@@ -3,7 +3,7 @@ create or replace type ExcelTableImpl as object (
 
   MIT License
 
-  Copyright (c) 2016 Marc Bleron
+  Copyright (c) 2016,2017 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -28,6 +28,8 @@ create or replace type ExcelTableImpl as object (
     Marc Bleron       2016-05-01     Creation
     Marc Bleron       2016-10-19     Removed doc_id attribute, 
                                      changed ctx_id to integer data type
+    Marc Bleron       2017-05-28     Added p_password argument to ODCITableDescribe,
+                                     -Prepare and -Start
 ====================================================================================== */
 
    atype     anytype
@@ -35,33 +37,36 @@ create or replace type ExcelTableImpl as object (
  , done      integer
 
  , static function ODCITableDescribe(
-     rtype    out anytype
-   , p_file   in  blob
-   , p_sheet  in  varchar2
-   , p_cols   in  varchar2
-   , p_range  in  varchar2 default null
-   , p_method in  binary_integer default 0
+     rtype      out anytype
+   , p_file     in  blob
+   , p_sheet    in  varchar2
+   , p_cols     in  varchar2
+   , p_range    in  varchar2 default null
+   , p_method   in  binary_integer default 0
+   , p_password in  varchar2 default null
    ) 
    return number
 
  , static function ODCITablePrepare(
-     sctx     out ExcelTableImpl
-   , tf_info  in  sys.ODCITabFuncInfo
-   , p_file   in  blob
-   , p_sheet  in  varchar2
-   , p_cols   in  varchar2
-   , p_range  in  varchar2 default null
-   , p_method in  binary_integer default 0
+     sctx       out ExcelTableImpl
+   , tf_info    in  sys.ODCITabFuncInfo
+   , p_file     in  blob
+   , p_sheet    in  varchar2
+   , p_cols     in  varchar2
+   , p_range    in  varchar2 default null
+   , p_method   in  binary_integer default 0
+   , p_password in  varchar2 default null
    )
    return number
 
  , static function ODCITableStart(
-     sctx     in out ExcelTableImpl
-   , p_file   in blob
-   , p_sheet  in varchar2
-   , p_cols   in varchar2
-   , p_range  in varchar2 default null
-   , p_method in binary_integer default 0
+     sctx       in out ExcelTableImpl
+   , p_file     in blob
+   , p_sheet    in varchar2
+   , p_cols     in varchar2
+   , p_range    in varchar2 default null
+   , p_method   in binary_integer default 0
+   , p_password in varchar2 default null
    ) 
    return number
 
