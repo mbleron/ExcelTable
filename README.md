@@ -123,7 +123,22 @@ procedure setFetchSize (p_nrows in number);
 ```
 Use setFetchSize() to control the number of rows returned by each invocation of the ODCITableFetch method.  
 If the number of rows requested by the client is greater than the fetch size, the fetch size is used instead.  
-The default fetch size is 100.
+The default fetch size is 100.  
+
+New in version 1.4
+```sql
+function getCursor (
+  p_file     in blob
+, p_sheet    in varchar2
+, p_cols     in varchar2
+, p_range    in varchar2 default null
+, p_method   in binary_integer default DOM_READ
+, p_password in varchar2 default null    
+)
+return sys_refcursor;
+```
+getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by an equivalent getRows() call.  
+It may be useful in PL/SQL code where static reference to table function returning ANYDATASET is not supported.  
 
 
 #### Columns syntax specification
@@ -261,9 +276,58 @@ SQL> select *
  
 ```  
 
+* Retrieving a REF cursor for query #1 : 
+
+```
+SQL> var rc refcursor
+SQL>
+SQL> begin
+  2    :rc :=
+  3    ExcelTable.getCursor(
+  4      p_file  => ExcelTable.getFile('TMP_DIR','ooxdata3.xlsx')
+  5    , p_sheet => 'DataSource'
+  6    , p_cols  => '"SRNO" number, "NAME" varchar2(10), "VAL" number, "DT" date, "SPARE1" varchar2(6), "SPARE2" varchar2(6)'
+  7    , p_range => 'A2'
+  8    );
+  9  end;
+ 10  /
+
+PL/SQL procedure successfully completed.
+
+SQL> print rc
+
+      SRNO NAME              VAL DT        SPARE1 SPARE2
+---------- ---------- ---------- --------- ------ ------
+         1 LINE-00001 66916.2986 13-OCT-23
+         2 LINE-00002 96701.3427 05-SEP-06
+         3 LINE-00003 68778.8698 23-JAN-11        OK
+         4 LINE-00004  95110.028 03-MAY-07        OK
+         5 LINE-00005 62561.5708 04-APR-27
+         6 LINE-00006 28677.1166 11-JUL-23        OK
+         7 LINE-00007 16141.0202 20-NOV-02
+         8 LINE-00008 80362.6256 19-SEP-10
+         9 LINE-00009 10384.1973 16-JUL-02
+        10 LINE-00010  5266.9097 08-AUG-21
+        11 LINE-00011 12513.0679 01-JUL-08
+        12 LINE-00012 66596.9707 22-MAR-13
+...
+        97 LINE-00097 19857.7661 16-FEB-09
+        98 LINE-00098 19504.3969 05-DEC-17
+        99 LINE-00099 98675.8673 05-JUN-06
+       100 LINE-00100 24288.2885 22-JUL-20
+
+100 rows selected.
+
+```  
+
 
 
 ## CHANGELOG
+### 1.4 (2017-06-11)
+
+* Added getCursor() function
+* Fixed NullPointerException when using streaming method and file has no sharedStrings
+
 ### 1.3 (2017-05-30)
 
 * Added support for password-encrypted files

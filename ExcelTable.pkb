@@ -294,18 +294,19 @@ create or replace package body ExcelTable is
     csz        binary_integer; -- Compressed size
     lfh        binary_integer; -- Local file header
   begin
-    lfh := p_archive.offsets(p_entryname); -- local file header
-    fnl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+26), utl_raw.little_endian);
-    efl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+28), utl_raw.little_endian);
-    csz := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 4, lfh+18), utl_raw.little_endian);
-    
-    dbms_lob.copy(tmp, p_archive.content, csz, 11, lfh + 30 + fnl + efl);
-    dbms_lob.append(tmp, dbms_lob.substr(p_archive.content, 4, lfh + 14)); -- CRC32
-    dbms_lob.append(tmp, dbms_lob.substr(p_archive.content, 4, lfh + 22)); -- uncompressed size
-    
-    dbms_lob.createtemporary(entry, true, dbms_lob.session);
-    utl_compress.lz_uncompress(tmp, entry);
-    --entry := utl_compress.lz_uncompress(tmp);
+    if p_archive.offsets.exists(p_entryname) then
+      lfh := p_archive.offsets(p_entryname); -- local file header
+      fnl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+26), utl_raw.little_endian);
+      efl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+28), utl_raw.little_endian);
+      csz := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 4, lfh+18), utl_raw.little_endian);
+      
+      dbms_lob.copy(tmp, p_archive.content, csz, 11, lfh + 30 + fnl + efl);
+      dbms_lob.append(tmp, dbms_lob.substr(p_archive.content, 4, lfh + 14)); -- CRC32
+      dbms_lob.append(tmp, dbms_lob.substr(p_archive.content, 4, lfh + 22)); -- uncompressed size
+      
+      dbms_lob.createtemporary(entry, true, dbms_lob.session);
+      utl_compress.lz_uncompress(tmp, entry);
+    end if;
     return entry;
   end;
   
@@ -1800,6 +1801,27 @@ create or replace package body ExcelTable is
     );
     dbms_lob.fileclose(l_file);
     return l_blob;
+  end;
+  
+  
+  function getCursor (
+    p_file     in blob
+  , p_sheet    in varchar2
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default DOM_READ
+  , p_password in varchar2 default null    
+  )
+  return sys_refcursor
+  is
+    l_rc     sys_refcursor;
+    l_query  varchar2(4000) :=
+    'SELECT * FROM TABLE(EXCELTABLE.GETROWS(:1,:2,''$$COLS'',''$$RANGE'',:3,:4))';
+  begin
+    l_query := replace(l_query, '$$COLS', replace(p_cols, '''', ''''''));
+    l_query := replace(l_query, '$$RANGE', p_range);
+    open l_rc for l_query using p_file, p_sheet, p_method, p_password;
+    return l_rc;
   end;
   
 

@@ -34,6 +34,7 @@ create or replace package ExcelTable is
                                      Added setFetchSize() procedure
     Marc Bleron       2017-05-14     Fixed ORA-06531 when file has no sharedStrings
     Marc Bleron       2017-05-28     Added support for password-encrypted workbooks
+    Marc Bleron       2017-06-11     Added getCursor() function
 ====================================================================================== */
 
   -- Read methods  
@@ -73,6 +74,16 @@ create or replace package ExcelTable is
   ) 
   return anydataset pipelined
   using ExcelTableImpl;
+  
+  function getCursor (
+    p_file     in blob
+  , p_sheet    in varchar2
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default DOM_READ
+  , p_password in varchar2 default null    
+  )
+  return sys_refcursor;
     
   procedure tableDescribe (
     rtype    out nocopy anytype
