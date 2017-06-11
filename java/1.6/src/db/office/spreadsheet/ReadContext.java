@@ -31,8 +31,8 @@ public class ReadContext {
 	public static int initialize(Blob worksheet, Blob sharedStrings, String columns, int firstRow, int lastRow, int vc2MaxSize)
 			throws IOException, CellReaderException, SQLException {
 				
-		VC2_MAXSIZE = vc2MaxSize;
-		ReadContext ctx = new ReadContext(worksheet.getBinaryStream(), sharedStrings.getBinaryStream(), columns, firstRow, lastRow);
+		VC2_MAXSIZE = vc2MaxSize; 
+		ReadContext ctx = new ReadContext(worksheet.getBinaryStream(), (sharedStrings!=null)?sharedStrings.getBinaryStream():null, columns, firstRow, lastRow);
 		
 		int key = 0;
 		try {

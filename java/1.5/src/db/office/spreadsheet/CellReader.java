@@ -40,7 +40,9 @@ public class CellReader {
 		//factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
 		try {
 			this.reader = factory.createXMLStreamReader(worksheet);
-			this.strings = SharedStringsHandler.getStrings(sharedStrings);
+			if (sharedStrings!=null) {
+				this.strings = SharedStringsHandler.getStrings(sharedStrings);
+			}
 		} catch (Exception e) {
 			throw new CellReaderException("Error during CellReader initialization", e);
 		}
