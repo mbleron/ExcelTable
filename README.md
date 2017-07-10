@@ -22,7 +22,7 @@ ExcelTable requires Oracle Database 11\.2\.0\.2 and onwards.
 
 ### DBA preliminary tasks
 
-*The following dependency is no longer required as of version 1.5 : *  
+*The following dependency is no longer required as of version 1.5 :*  
 ~~ExcelTable package needs read access to V$PARAMETER view internally to retrieve the value of the `max_string_size` parameter.
 Therefore, the owner must be granted the necessary privilege in order to compile and run the program :  
 `grant select on sys.v_$parameter to <user>;`~~
