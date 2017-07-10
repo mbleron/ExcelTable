@@ -22,10 +22,9 @@ ExcelTable requires Oracle Database 11\.2\.0\.2 and onwards.
 
 ### DBA preliminary tasks
 
-*The following dependency is no longer required as of version 1.5 : *
+*The following dependency is no longer required as of version 1.5 : *  
 ~~ExcelTable package needs read access to V$PARAMETER view internally to retrieve the value of the `max_string_size` parameter.
 Therefore, the owner must be granted the necessary privilege in order to compile and run the program :  
-
 `grant select on sys.v_$parameter to <user>;`~~
 
 On database versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally.
@@ -147,15 +146,15 @@ Column names must be declared using a quoted identifier.
 
 Supported data types are :
 
-* NUMBER – with optional precision and scale specs.
+* NUMBER â€“ with optional precision and scale specs.
 
-* VARCHAR2 – including CHAR/BYTE semantics. Values larger than the maximum length declared are silently truncated and no error is reported.
+* VARCHAR2 â€“ including CHAR/BYTE semantics. Values larger than the maximum length declared are silently truncated and no error is reported.
 
-* DATE – with optional format mask. The format mask is used if the value is stored as text in the spreadsheet, otherwise the date value is assumed to be stored as date in Excel’s internal serial format.
+* DATE â€“ with optional format mask. The format mask is used if the value is stored as text in the spreadsheet, otherwise the date value is assumed to be stored as date in Excelâ€™s internal serial format.
 
 * CLOB
 
-A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE’s one) is also available to autogenerate a sequence number.
+A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLEâ€™s one) is also available to autogenerate a sequence number.
 
 Each column definition (except for the one qualified with FOR ORDINALITY) may be complemented with an optional "COLUMN" clause to explicitly target a named column in the spreadsheet, instead of relying on the order of the declarations (relative to the range).
 Positional and named column definitions cannot be mixed.
@@ -183,8 +182,8 @@ or,
 
 There are four ways to specify the table range :
 
-* Range of rows : `'1:100'` – in this case the range of columns implicitly starts at A.
-* Range of columns : `'B:E'` – in this case the range of rows implicitly starts at 1.
+* Range of rows : `'1:100'` â€“ in this case the range of columns implicitly starts at A.
+* Range of columns : `'B:E'` â€“ in this case the range of rows implicitly starts at 1.
 * Range of cells (top-left to bottom-right) : `'B2:F150'`
 * Single cell anchor (top-left cell) : `'C3'`
 
