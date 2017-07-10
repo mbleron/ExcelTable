@@ -35,6 +35,9 @@ create or replace package ExcelTable is
     Marc Bleron       2017-05-14     Fixed ORA-06531 when file has no sharedStrings
     Marc Bleron       2017-05-28     Added support for password-encrypted workbooks
     Marc Bleron       2017-06-11     Added getCursor() function
+    Marc Bleron       2017-07-10     Fixed bug when accessing zip archive created with 
+                                     data descriptors. (Un)compressed sizes and CRC-32
+                                     are now read from central directory entries
 ====================================================================================== */
 
   -- Read methods  

@@ -22,13 +22,13 @@ ExcelTable requires Oracle Database 11\.2\.0\.2 and onwards.
 
 ### DBA preliminary tasks
 
-ExcelTable package needs read access to V$PARAMETER view internally to retrieve the value of the `max_string_size` parameter.
-Therefore, the owner must be granted the necessary privilege in order to compile and run the program : 
-```sql
-grant select on sys.v_$parameter to <user>;
-```
+*The following dependency is no longer required as of version 1.5 : *
+~~ExcelTable package needs read access to V$PARAMETER view internally to retrieve the value of the `max_string_size` parameter.
+Therefore, the owner must be granted the necessary privilege in order to compile and run the program :  
 
-On versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally.
+`grant select on sys.v_$parameter to <user>;`~~
+
+On database versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally.
 The owner requires the CREATE TABLE privilege in this case : 
 ```sql
 grant create table to <user>;
@@ -323,6 +323,12 @@ SQL> print rc
 
 
 ## CHANGELOG
+### 1.5 (2017-07-10)
+
+* Fixed bug related to zip archives created with data descriptors. Now reading CRC-32, compressed and uncompressed sizes directly from Central Directory entries.
+* Removed dependency to V$PARAMETER view (thanks [Paul](https://paulzipblog.wordpress.com/) for the suggestion)
+
+
 ### 1.4 (2017-06-11)
 
 * Added getCursor() function

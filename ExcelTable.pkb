@@ -92,8 +92,9 @@ create or replace package body ExcelTable is
   type tokenizer_t is record (expr varchar2(4000), pos binary_integer, options binary_integer);
 
   -- open xml structures
-  type t_offsets is table of integer index by varchar2(260);
-  type t_archive is record (offsets t_offsets, content blob);
+  type t_entry is record (offset integer, csize integer, ucsize integer, crc32 raw(4));
+  type t_entries is table of t_entry index by varchar2(260);
+  type t_archive is record (entries t_entries, content blob);
   type t_workbook is record (path varchar2(260), content xmltype, rels xmltype);
   type t_exceldoc is record (file t_archive, content_map xmltype, workbook t_workbook);
   
@@ -148,21 +149,15 @@ create or replace package body ExcelTable is
   end;
 
 
-  -- SELECT_CATALOG_ROLE required
-  -- grant select on sys.v_$parameter to <user>;
   function get_max_string_size 
   return pls_integer 
   is
     l_result  pls_integer;
   begin
-    select case when value = 'EXTENDED' then 32767 else 4000 end
+    select lengthb(rpad('x',32767,'x')) 
     into l_result
-    from v$parameter
-    where name = 'max_string_size' ;
+    from dual;
     return l_result;
-  exception
-    when no_data_found then
-      return 4000 ;
   end;
 
 
@@ -236,10 +231,10 @@ create or replace package body ExcelTable is
     efl              binary_integer; -- Extra field length
     fcl              binary_integer; -- File comment length
     fn               varchar2(260);  -- File name
-    lfh              binary_integer; -- Local file header
     gpb              raw(2);         -- General Purpose Bits
     enc              varchar2(30);
     cdrPtr           binary_integer := 0;
+    entry            t_entry;
     my_archive       t_archive;
 
   begin
@@ -264,8 +259,13 @@ create or replace package body ExcelTable is
       fn  := utl_i18n.raw_to_char(dbms_lob.substr(p_zip, fnl, cdrPtr+46), enc);
 
       if substr(fn, -1) != '/' then
-        lfh := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_zip, 4, cdrPtr+42), utl_raw.little_endian) + 1;
-        my_archive.offsets(fn) := lfh;
+        
+        entry.offset := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_zip, 4, cdrPtr+42), utl_raw.little_endian) + 1;
+        entry.crc32 := dbms_lob.substr(p_zip, 4, cdrPtr+16);
+        entry.csize := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_zip, 4, cdrPtr+20), utl_raw.little_endian);
+        entry.ucsize := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_zip, 4, cdrPtr+24), utl_raw.little_endian);
+        my_archive.entries(fn) := entry;
+        
       end if;
       -- next entry in central directory
       cdrPtr := cdrPtr + 46 + fnl + efl + fcl;
@@ -288,26 +288,26 @@ create or replace package body ExcelTable is
   return blob
   is
     tmp        blob := hextoraw('1F8B08000000000000FF'); -- gzip magic header + flags
-    entry      blob;
+    content    blob;
     fnl        binary_integer; -- File name length
     efl        binary_integer; -- Extra field length
-    csz        binary_integer; -- Compressed size
     lfh        binary_integer; -- Local file header
+    entry      t_entry;
   begin
-    if p_archive.offsets.exists(p_entryname) then
-      lfh := p_archive.offsets(p_entryname); -- local file header
+    if p_archive.entries.exists(p_entryname) then     
+      entry := p_archive.entries(p_entryname);
+      lfh := entry.offset;
       fnl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+26), utl_raw.little_endian);
       efl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+28), utl_raw.little_endian);
-      csz := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 4, lfh+18), utl_raw.little_endian);
       
-      dbms_lob.copy(tmp, p_archive.content, csz, 11, lfh + 30 + fnl + efl);
-      dbms_lob.append(tmp, dbms_lob.substr(p_archive.content, 4, lfh + 14)); -- CRC32
-      dbms_lob.append(tmp, dbms_lob.substr(p_archive.content, 4, lfh + 22)); -- uncompressed size
+      dbms_lob.copy(tmp, p_archive.content, entry.csize, 11, lfh + 30 + fnl + efl);
+      dbms_lob.append(tmp, entry.crc32); -- CRC32
+      dbms_lob.append(tmp, utl_raw.cast_from_binary_integer(entry.ucsize, utl_raw.little_endian)); -- uncompressed size
       
-      dbms_lob.createtemporary(entry, true, dbms_lob.session);
-      utl_compress.lz_uncompress(tmp, entry);
+      dbms_lob.createtemporary(content, true, dbms_lob.session);
+      utl_compress.lz_uncompress(tmp, content);
     end if;
-    return entry;
+    return content;
   end;
   
   -- ----------------------------------------------------------------------------------------------
