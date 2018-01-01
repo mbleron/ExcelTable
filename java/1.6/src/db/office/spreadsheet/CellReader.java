@@ -160,6 +160,8 @@ public class CellReader {
 
 			cell = new Cell(cellRef, cellValue, cellType);
 
+		} else {
+			cell = new Cell(cellRef, "", "");
 		}
 
 		return cell;

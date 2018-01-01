@@ -159,7 +159,14 @@ A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE’s one) is also 
 Each column definition (except for the one qualified with FOR ORDINALITY) may be complemented with an optional "COLUMN" clause to explicitly target a named column in the spreadsheet, instead of relying on the order of the declarations (relative to the range).
 Positional and named column definitions cannot be mixed.
 
-For instance :
+New in version 1.6 : 
+ExcelTable can also extract cell comments and project them as regular columns.  
+In order to do so, the column syntax has been extended with a FOR METADATA clause : 
+
+`FOR METADATA (COMMENT)`
+
+
+Examples :
 
 ```
   "RN"    for ordinality
@@ -170,11 +177,16 @@ For instance :
 , "COL5"  number(10,2)
 , "COL6"  varchar2(5)
 ```
-or,
+
 ```
   "COL1"  number        column 'A'
 , "COL2"  varchar2(10)  column 'C'
 , "COL3"  clob          column 'D'
+```
+
+```
+"SPARE2"         varchar2(30)   column 'F'
+"SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
 ```
 
 
@@ -319,14 +331,57 @@ SQL> print rc
 
 ```  
 
+* Extracting column F (value and cell comment) : 
+
+```
+SQL> select t.*
+  2  from table(
+  3         ExcelTable.getRows(
+  4           ExcelTable.getFile('TMP_DIR','ooxdata3.xlsx')
+  5         , 'DataSource'
+  6         , q'{
+  7             "RN"             for ordinality
+  8           , "SPARE2"         varchar2(30)   column 'F'
+  9           , "SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
+ 10           }'
+ 11         , '2:11'
+ 12         )
+ 13       ) t
+ 14  ;
+
+ RN SPARE2 SPARE2_COMMENT
+--- ------ ------------------------------
+  1
+  2
+  3 OK     bleronm:
+           This is a comment.
+
+  4 OK
+  5
+  6 OK
+  7
+  8
+  9        This is
+           another comment
+           on three lines
+
+ 10
+
+10 rows selected.
+
+```
 
 
 ## CHANGELOG
+### 1.6 (2017-12-31)
+
+* Added cell comments extraction
+* Internal modularization
+
 ### 1.5 (2017-07-10)
 
 * Fixed bug related to zip archives created with data descriptors. Now reading CRC-32, compressed and uncompressed sizes directly from Central Directory entries.
 * Removed dependency to V$PARAMETER view (thanks [Paul](https://paulzipblog.wordpress.com/) for the suggestion)
-
 
 ### 1.4 (2017-06-11)
 

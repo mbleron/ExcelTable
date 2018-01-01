@@ -38,11 +38,16 @@ create or replace package ExcelTable is
     Marc Bleron       2017-07-10     Fixed bug when accessing zip archive created with 
                                      data descriptors. (Un)compressed sizes and CRC-32
                                      are now read from central directory entries
+    Marc Bleron       2017-07-14     Support for long identifiers
+    Marc Bleron       2017-12-31     Added cell comments extraction
 ====================================================================================== */
 
   -- Read methods  
   DOM_READ               constant binary_integer := 0;
   STREAM_READ            constant binary_integer := 1;
+  STREAM_READ_XDB        constant binary_integer := 2;
+
+  subtype DMLContext is binary_integer;
 
   procedure setFetchSize (p_nrows in number);
   
@@ -55,16 +60,41 @@ create or replace package ExcelTable is
     row_ref    ::= integer
   
     column_list    ::= column_expr { "," column_expr }
-    column_expr    ::= ( identifier datatype [ "column" string_literal ] | identifier for_ordinality )
-    datatype       ::= ( number_expr | varchar2_expr | date_expr | clob_expr | for_ordinality )
+    column_expr    ::= ( identifier datatype [ "column" string_literal ] [ for_metadata ]
+                       | identifier for_ordinality )
+    datatype       ::= ( number_expr | varchar2_expr | date_expr | clob_expr )
     number_expr    ::= "number" [ "(" ( integer | "*" ) [ "," integer ] ")" ]
     varchar2_expr  ::= "varchar2" "(" integer [ "char" | "byte" ] ")"
     date_expr      ::= "date" [ "format" string_literal ]
     clob_expr      ::= "clob"
     for_ordinality ::= "for" "ordinality"
+    for_metadata   ::= "for" "metadata" "(" ( "comment" | "formula" ) ")"
     identifier     ::= "\"" { char } "\""
     string_literal ::= "'" { char } "'"
   
+  */
+
+  /*
+  function createDMLContext (
+    p_table_name in varchar2    
+  )
+  return DMLContext;
+  
+  procedure mapColumn (
+    p_ctx_id   in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2
+  , p_format   in varchar2 default null
+  );
+  
+  procedure insertData (
+    p_ctx_id    in DMLContext 
+  , p_file      in blob
+  , p_sheet     in varchar2 
+  , p_range     in varchar2 default null
+  , p_method    in binary_integer default DOM_READ
+  , p_password  in varchar2 default null
+  );
   */
   
   function getRows (
@@ -112,7 +142,6 @@ create or replace package ExcelTable is
   procedure tableFetch(
     p_type   in out nocopy anytype
   , p_ctx_id in out nocopy binary_integer
-  , p_done   in out nocopy integer
   , nrows    in number
   , rws      out nocopy anydataset
   );
