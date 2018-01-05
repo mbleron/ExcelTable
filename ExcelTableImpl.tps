@@ -30,11 +30,11 @@ create or replace type ExcelTableImpl as object (
                                      changed ctx_id to integer data type
     Marc Bleron       2017-05-28     Added p_password argument to ODCITableDescribe,
                                      -Prepare and -Start
+    Marc Bleron       2017-07-22     Moved 'done' attribute to context cache
 ====================================================================================== */
 
    atype     anytype
  , ctx_id    integer
- , done      integer
 
  , static function ODCITableDescribe(
      rtype      out anytype

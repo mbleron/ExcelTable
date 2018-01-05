@@ -37,7 +37,6 @@ create or replace type body ExcelTableImpl as
     sctx := ExcelTableImpl(
               ExcelTable.tablePrepare(tf_info)
             , null
-            , 0
             ) ;
 
     return ODCIConst.SUCCESS;
@@ -77,7 +76,6 @@ create or replace type body ExcelTableImpl as
     ExcelTable.tableFetch(
       self.atype 
     , self.ctx_id
-    , self.done
     , nrows
     , rws
     );
