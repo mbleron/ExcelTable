@@ -1417,6 +1417,45 @@ from $$TAB t
   end;
 
 
+  procedure readStringsDOM (
+    sharedStrings  in xmltype
+  , string_cache   in out nocopy t_strings     
+  )
+  is
+    domDoc       dbms_xmldom.DOMDocument;
+    docNode      dbms_xmldom.DOMNode;
+    nlist        dbms_xmldom.DOMNodeList;
+    node         dbms_xmldom.DOMNode;
+    uniqueCount  pls_integer;
+    charBuf      varchar2(32767);   
+  begin
+
+    domDoc := dbms_xmldom.newDOMDocument(sharedStrings);
+    docNode := dbms_xmldom.makeNode(domDoc);
+    uniqueCount := dbms_xslprocessor.valueOf(docNode, '/sst/@uniqueCount', SML_NSMAP);
+    string_cache := t_strings();
+    string_cache.extend(uniqueCount);
+    
+    nlist := dbms_xslprocessor.selectNodes(docNode, '/sst/si', SML_NSMAP);
+    
+    for i in 0 .. dbms_xmldom.getLength(nlist) - 1 loop
+      node := dbms_xmldom.item(nlist, i);
+      begin
+        dbms_xslprocessor.valueOf(node, '.', charBuf, SML_NSMAP);
+        string_cache(i+1).strval := charBuf;
+      exception
+        when value_error then
+          readclob(dbms_xslprocessor.selectNodes(node, '//t/text()', SML_NSMAP), string_cache(i+1).lobval);
+      end;
+      dbms_xmldom.freeNode(node);
+    end loop;
+    
+    dbms_xmldom.freeNodeList(nlist);
+    dbms_xmldom.freeDocument(domDoc);
+  
+  end;
+
+
   procedure OX_loadStringCache (
     p_doc    in out nocopy t_exceldoc
   , p_ctx_id in binary_integer
@@ -1449,6 +1488,7 @@ from $$TAB t
        For prior versions, we'll first insert the XML document into a temp XMLType table using 
        Binary XML storage. The temp table is created on-the-fly, not a good practice but a lot
        faster than the alternative using DOM.
+       Version 11.2.0.1 has limited support for CLOB, so using DOM to extract large text nodes
       ======================================================================================= */
       if dbms_db_version.version >= 12 or DB_VERSION like '11.2.0.4%' then
         
@@ -1458,10 +1498,14 @@ from $$TAB t
         bulk collect into ctx_cache(p_ctx_id).string_cache
         using l_xml;
       
-      else
+      elsif DB_VERSION like '11.2.0.2%' or DB_VERSION like '11.2.0.3%' then
         
         l_query := replace(l_query, '$$HINT', null);
         readStringsFromBinXML(l_query, l_xml, ctx_cache(p_ctx_id).string_cache);
+        
+      else
+        
+        readStringsDOM(l_xml, ctx_cache(p_ctx_id).string_cache);
         
       end if;
       

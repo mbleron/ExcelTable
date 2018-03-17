@@ -373,6 +373,9 @@ SQL> select t.*
 
 
 ## CHANGELOG
+### 1.6.1 (2018-03-17)
+* Added large strings support for versions prior 11.2.0.2 
+
 ### 1.6 (2017-12-31)
 
 * Added cell comments extraction
@@ -411,4 +414,4 @@ SQL> select t.*
 
 ## Copyright and license
 
-Copyright 2016,2017 Marc Bleron. Released under MIT license.
+Copyright 2016-2018 Marc Bleron. Released under MIT license.
