@@ -11,7 +11,7 @@ It is entirely implemented in PL/SQL using an object type (for the ODCI routines
 ## Bug tracker
 
 Found bugs? I'm sure there are...  
-Please create an issue here on GitHub at <https://github.com/mbleron/oracle/issues>.
+Please create an issue [here](https://github.com/mbleron/ExcelTable/issues).
 
 ## Installation
 
@@ -54,8 +54,8 @@ Create the following objects, in this order :
 
 Add the following (soft) dependencies in order to use the crytographic features : 
 
-[XUTL_CDF](../CDFReader) : CFBF (OLE2) file reader  
-[XUTL_OFFCRYPTO](../OfficeCrypto) : Office crypto routines
+[XUTL_CDF](https://github.com/mbleron/MSUtilities/tree/master/CDFReader) : CFBF (OLE2) file reader  
+[XUTL_OFFCRYPTO](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) : Office crypto routines
 
 ```
 @xutl_cdf.pks
