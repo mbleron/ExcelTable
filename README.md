@@ -214,7 +214,7 @@ By default, password-protected Office files use AES encryption :
 | 2016            | Agile   | AES-256    | SHA512         | CBC
 
 Oracle, through DBMS_CRYPTO API, only supports SHA-2 algorithms (SHA256, 384, 512) starting from 12c.  
-Therefore, in prior versions, the [OfficeCrypto](../OfficeCrypto) implementation cannot read Office 2013 (and onwards) documents encrypted with the default options.  
+Therefore, in prior versions, the [OfficeCrypto](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) implementation cannot read Office 2013 (and onwards) documents encrypted with the default options.  
 
 Full specs available on MSDN : [[MS-OFFCRYPTO]](https://msdn.microsoft.com/en-us/library/cc313071)  
 
