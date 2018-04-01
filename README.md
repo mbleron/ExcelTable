@@ -41,7 +41,7 @@ grant execute on sys.dbms_crypto to <user>;
 
 Create the following objects, in this order : 
 
-> As of version 2.0, the following packages are now **mandatory** dependencies : 
+> As of version 2.0, the following packages are now **mandatory** dependencies :  
 > [XUTL_CDF](https://github.com/mbleron/MSUtilities/tree/master/CDFReader) : CFBF (OLE2) file reader  
 > [XUTL_OFFCRYPTO](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) : Office crypto routines  
 > XUTL_XLS for reading .xls files
@@ -49,7 +49,7 @@ Create the following objects, in this order :
 ```
 @xutl_cdf.pks
 @xutl_cdf.pkb
-@xutl_offcryto.pks
+@xutl_offcrypto.pks
 @xutl_offcrypto.pkb
 ```
 
@@ -112,11 +112,11 @@ A helper function `ExcelTable.getFile` is available to directly reference the fi
 * `p_sheet` : Worksheet name
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
-* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored when reading from an .xls file.
+* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored when reading from a .xls file.
 * `p_password` : Optional - password used to encrypt the Excel document
-  
-  
-<br>
+
+
+## 
 ```sql
 procedure setFetchSize (p_nrows in number);
 ```
@@ -125,7 +125,7 @@ If the number of rows requested by the client is greater than the fetch size, th
 The default fetch size is 100.  
 
 
-<br>
+## 
 ```sql
 function getCursor (
   p_file     in blob
@@ -140,7 +140,7 @@ return sys_refcursor;
 getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by an equivalent getRows() call.  
 It may be useful in PL/SQL code where static reference to table function returning ANYDATASET is not supported.  
 
-
+## 
 #### Columns syntax specification
 
 Column names must be declared using a quoted identifier.
@@ -190,7 +190,7 @@ Examples :
 "SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
 ```
 
-
+## 
 #### Range syntax specification
 
 There are four ways to specify the table range :
@@ -202,7 +202,7 @@ There are four ways to specify the table range :
 
 > If the range is empty, the table implicitly starts at cell A1.
 
-
+## 
 #### Cryptographic features overview
 
 By default, Office 97-2003 password-protected files use RC4 encryption.  
@@ -222,7 +222,7 @@ Therefore, in prior versions, the [OfficeCrypto](https://github.com/mbleron/MSUt
 Full specs available on MSDN : [[MS-OFFCRYPTO]](https://msdn.microsoft.com/en-us/library/cc313071)  
 
 
-
+## 
 ### Examples
 
 Given this sample file : [ooxdata3.xlsx](./samples/ooxdata3.xlsx)
