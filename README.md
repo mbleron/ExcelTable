@@ -1,12 +1,14 @@
-# ExcelTable - An Excel Open Office XML SQL Interface
+# ExcelTable - An Oracle SQL Interface for MS Excel Files
 
-ExcelTable is a pipelined table interface to read an Excel file (.xlsx or .xlsm) as if it were an external table.
+ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xls) as if it were an external table.
 It is entirely implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
 > As of version 1.2, a streaming implementation is available for better scalability on large files. 
 > This feature requires the server-side Java VM.
 
 > As of version 1.3, ExcelTable can read password-encrypted files.
+
+> As of version 2.0, ExcelTable can read old 97-2003 Excel files (.xls)
 
 ## Bug tracker
 
@@ -17,15 +19,10 @@ Please create an issue [here](https://github.com/mbleron/ExcelTable/issues).
 
 ### Database requirement
 
-ExcelTable requires Oracle Database 11\.2\.0\.2 and onwards.
-> Note that the interface may work as well on version 11\.1\.0\.6, 11\.1\.0\.7 and 11\.2\.0\.1, with limited support for CLOB projections, but that scenario has not been tested.
+ExcelTable requires Oracle Database 11\.2\.0\.1 and onwards.
+> Note that the interface may work as well on versions 11\.1\.0\.6 and 11\.1\.0\.7, with limited support for CLOB projections, but that scenario has not been tested.
 
 ### DBA preliminary tasks
-
-*The following dependency is no longer required as of version 1.5 :*  
-~~ExcelTable package needs read access to V$PARAMETER view internally to retrieve the value of the `max_string_size` parameter.
-Therefore, the owner must be granted the necessary privilege in order to compile and run the program :  
-`grant select on sys.v_$parameter to <user>;`~~
 
 On database versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally.
 The owner requires the CREATE TABLE privilege in this case : 
@@ -33,7 +30,7 @@ The owner requires the CREATE TABLE privilege in this case :
 grant create table to <user>;
 ```
 
-In version 1.3, accessing encrypted Excel files requires some additional dependencies based on DBMS_CRYPTO API (see PL/SQL section below).  
+In order to read encrypted Excel files, the interface requires access to the DBMS_CRYPTO API (see PL/SQL section below).  
 The owner must therefore be granted EXECUTE privilege on it : 
 ```sql
 grant execute on sys.dbms_crypto to <user>;
@@ -43,25 +40,28 @@ grant execute on sys.dbms_crypto to <user>;
 ### PL/SQL
 
 Create the following objects, in this order : 
-```
-@ExcelTableCell.tps
-@ExcelTableCellList.tps
-@ExcelTableImpl.tps
-@ExcelTable.pks
-@ExcelTable.pkb
-@ExcelTableImpl.tpb
-```
 
-Add the following (soft) dependencies in order to use the crytographic features : 
-
-[XUTL_CDF](https://github.com/mbleron/MSUtilities/tree/master/CDFReader) : CFBF (OLE2) file reader  
-[XUTL_OFFCRYPTO](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) : Office crypto routines
+> As of version 2.0, the following packages are now **mandatory** dependencies : 
+> [XUTL_CDF](https://github.com/mbleron/MSUtilities/tree/master/CDFReader) : CFBF (OLE2) file reader  
+> [XUTL_OFFCRYPTO](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) : Office crypto routines  
+> XUTL_XLS for reading .xls files
 
 ```
 @xutl_cdf.pks
 @xutl_cdf.pkb
 @xutl_offcryto.pks
 @xutl_offcrypto.pkb
+```
+
+```
+@ExcelTableCell.tps
+@ExcelTableCellList.tps
+@xutl_xls.pks
+@xutl_xls.pkb
+@ExcelTableImpl.tps
+@ExcelTable.pks
+@ExcelTable.pkb
+@ExcelTableImpl.tpb
 ```
 
 
@@ -107,16 +107,16 @@ return anydataset pipelined
 using ExcelTableImpl;
 ```
 
-* `p_file` : Input Excel file in Office Open XML format (.xlsx or .xlsm).
+* `p_file` : Input Excel file (.xlsx, .xlsm or .xls format).
 A helper function `ExcelTable.getFile` is available to directly reference the file from a directory.
 * `p_sheet` : Worksheet name
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
-* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1)
+* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored when reading from an .xls file.
 * `p_password` : Optional - password used to encrypt the Excel document
   
   
-New in version 1.2
+<br>
 ```sql
 procedure setFetchSize (p_nrows in number);
 ```
@@ -124,7 +124,8 @@ Use setFetchSize() to control the number of rows returned by each invocation of 
 If the number of rows requested by the client is greater than the fetch size, the fetch size is used instead.  
 The default fetch size is 100.  
 
-New in version 1.4
+
+<br>
 ```sql
 function getCursor (
   p_file     in blob
@@ -204,10 +205,12 @@ There are four ways to specify the table range :
 
 #### Cryptographic features overview
 
-By default, password-protected Office files use AES encryption : 
+By default, Office 97-2003 password-protected files use RC4 encryption.  
+Latest versions (2007+) based on [ECMA-376](http://www.ecma-international.org/publications/standards/Ecma-376.htm) standard use AES encryption : 
 
 | Office version  | Method  | Encryption | Hash algorithm | Block chaining  
 | :-------------- | :-----  | :--------- | :------------- | :-------------
+| 97-2003         | RC4     | RC4        | MD5            | -
 | 2007            | Standard| AES-128    | SHA-1          | ECB
 | 2010            | Agile   | AES-128    | SHA-1          | CBC
 | 2013            | Agile   | AES-256    | SHA512         | CBC
@@ -284,6 +287,52 @@ SQL> select *
          1
          2
          3
+ 
+```  
+
+* Loading first three columns, row 1 to 91, from a password-encrypted .xls workbook ([ooxdata2c.xls](./samples/ooxdata2c.xls)) : 
+
+```
+SQL> select t.srno
+  2       , t.name
+  3       , t.content
+  4       , length(t.content) as content_length
+  5  from table(
+  6         ExcelTable.getRows(
+  7           ExcelTable.getFile('TMP_DIR','ooxdata2c.xls')
+  8         , 'DataSource'
+  9         , ' "SRNO"    number
+ 10           , "NAME"    varchar2(10)
+ 11           , "CONTENT" clob'
+ 12         , '1:91'
+ 13         , p_method   => null
+ 14         , p_password => 'pass123'
+ 15         )
+ 16       ) t
+ 17  ;
+ 
+      SRNO NAME       CONTENT                                             CONTENT_LENGTH
+---------- ---------- --------------------------------------------------- --------------
+         1 LINE-00001 ABCD                                                             4
+         2 LINE-00002 ABC                                                              3
+         3 LINE-00003 ABC                                                              3
+         4 LINE-00004 ABC                                                              3
+         5 LINE-00005 ABC                                                              3
+         6 LINE-00006 ABC                                                              3
+         7 LINE-00007 ABC                                                              3
+         8 LINE-00008 €XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX           8000
+         9 LINE-00009 €€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€           4000
+        10 LINE-00010 10LINE-00010                                                    12
+        11 LINE-00011 €XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX          12000
+        12 LINE-00012 ABC                                                              3
+        13 LINE-00013 ABC                                                              3
+        14 LINE-00014 ABC                                                              3
+...
+        89 LINE-00089 ABC                                                              3
+        90 LINE-00090 ABC                                                              3
+        91 LINE-00091 ABC                                                              3
+ 
+89 rows selected.
  
 ```  
 
@@ -373,6 +422,9 @@ SQL> select t.*
 
 
 ## CHANGELOG
+### 2.0 (2018-04-01)
+* Added support for Excel 97-2003 files (.xls)
+
 ### 1.6.1 (2018-03-17)
 * Added large strings support for versions prior 11.2.0.2 
 

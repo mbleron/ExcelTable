@@ -43,6 +43,7 @@ create or replace package body ExcelTable is
   DUPLICATE_COL_NAME     constant varchar2(100) := 'Duplicate column name ''%s''';
   SHEET_NOT_FOUND        constant varchar2(100) := 'Sheet not found : ''%s''';
 
+  BIFF8_READ             constant binary_integer := -1;
   -- File type
   SIGNATURE_OPC          constant binary_integer := 0;
   SIGNATURE_CDF          constant binary_integer := 1;
@@ -157,6 +158,7 @@ create or replace package body ExcelTable is
   , stream_key   integer
   , ws_content   blob
   , table_info   t_table_info
+  , biff8_key    pls_integer
   );
   
   type t_ctx_cache is table of t_context index by binary_integer;
@@ -281,7 +283,15 @@ create or replace package body ExcelTable is
     end if;
     return output;
   end;
+
   
+  function is_opc_package (p_file in blob)
+  return boolean
+  is
+  begin
+    return ( dbms_lob.substr(p_file, 4) = hextoraw('504B0304') );
+  end;
+
   
   function get_opc_package (
     p_file     in blob
@@ -542,27 +552,37 @@ create or replace package body ExcelTable is
 
 
   function get_date_val (
-    p_value     in varchar2
-  , p_format    in varchar2
-  , p_type      in varchar2  
+    p_value  in number 
   )
   return date
   is
     l_date    date;
-    l_number  number;
+  begin
+    -- Excel bug workaround : date 1900-02-29 doesn't exist yet Excel stores it at serial #60
+    -- The following skips it and converts to Oracle date correctly
+    if p_value > 60 then
+      l_date := date '1899-12-30' + p_value;
+    elsif p_value < 60 then
+      l_date := date '1899-12-31' + p_value;
+    end if;
+    return l_date;
+  end;
+
+
+  function get_date_val (
+    p_value   in varchar2
+  , p_format  in varchar2
+  , p_type    in varchar2  
+  )
+  return date
+  is
+    l_date    date;
   begin
 
     if p_type in ('s','inlineStr','str') then
       l_date := to_date(p_value, nvl(p_format, get_date_format));
-    else   
-      l_number := to_number(replace(p_value,'.',get_decimal_sep));
-      -- Excel bug workaround : date 1900-02-29 doesn't exist yet Excel stores it at serial #60
-      -- The following skips it and converts to Oracle date correctly
-      if l_number > 60 then
-        l_date := date '1899-12-30' + l_number;
-      elsif l_number < 60 then
-        l_date := date '1899-12-31' + l_number;
-      end if;
+    else
+      l_date := get_date_val(to_number(replace(p_value,'.',get_decimal_sep)));
     end if;
     
     return l_date;
@@ -1488,7 +1508,7 @@ from $$TAB t
        For prior versions, we'll first insert the XML document into a temp XMLType table using 
        Binary XML storage. The temp table is created on-the-fly, not a good practice but a lot
        faster than the alternative using DOM.
-       Version 11.2.0.1 has limited support for CLOB, so using DOM to extract large text nodes
+       Version 11.2.0.1 has limited support for CLOB, so using DOM to extract large text nodes.
       ======================================================================================= */
       if dbms_db_version.version >= 12 or DB_VERSION like '11.2.0.4%' then
         
@@ -1502,7 +1522,7 @@ from $$TAB t
         
         l_query := replace(l_query, '$$HINT', null);
         readStringsFromBinXML(l_query, l_xml, ctx_cache(p_ctx_id).string_cache);
-        
+      
       else
         
         readStringsDOM(l_xml, ctx_cache(p_ctx_id).string_cache);
@@ -1532,36 +1552,45 @@ from $$TAB t
     l_sheet_rels := Zip_getXML(doc.file, l_sheet_rels_path);
 
     -- get path of the comments part
-    select x.partname
-    into l_comments_path
-    from xmltable(
-           xmlnamespaces(default 'http://schemas.openxmlformats.org/package/2006/relationships')
-         , 'for $r in /Relationships/Relationship
-            where $r/@Type = $relType
-            return resolve-uri($r/@Target, $path)'
-           passing l_sheet_rels
-                 , RS_COMMENTS as "relType"
-                 , sheet_path as "path"
-           columns partname varchar2(256) path '.'
-         ) x ;
-         
-    l_comments_part := Zip_getXML(doc.file, l_comments_path);
-  
-    for r in (
-      select x.cell_ref, x.cell_cmt
+    begin
+      select x.partname
+      into l_comments_path
       from xmltable(
-             xmlnamespaces(default 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
-           , '/comments/commentList/comment'
-             passing l_comments_part
-             columns cell_ref varchar2(10)   path '@ref'
-                   , cell_cmt varchar2(4000) path 'text'
-           ) x
-    )
-    loop
-      l_comments(r.cell_ref) := r.cell_cmt;
-    end loop;
+             xmlnamespaces(default 'http://schemas.openxmlformats.org/package/2006/relationships')
+           , 'for $r in /Relationships/Relationship
+              where $r/@Type = $relType
+              return resolve-uri($r/@Target, $path)'
+             passing l_sheet_rels
+                   , RS_COMMENTS as "relType"
+                   , sheet_path as "path"
+             columns partname varchar2(256) path '.'
+           ) x ;
+    exception
+      when no_data_found then
+        null;
+    end;
     
-    ctx_cache(ctx_id).comments := l_comments;
+    if l_comments_path is not null then
+      
+      l_comments_part := Zip_getXML(doc.file, l_comments_path);
+    
+      for r in (
+        select x.cell_ref, x.cell_cmt
+        from xmltable(
+               xmlnamespaces(default 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
+             , '/comments/commentList/comment'
+               passing l_comments_part
+               columns cell_ref varchar2(10)   path '@ref'
+                     , cell_cmt varchar2(4000) path 'text'
+             ) x
+      )
+      loop
+        l_comments(r.cell_ref) := r.cell_cmt;
+      end loop;
+      
+      ctx_cache(ctx_id).comments := l_comments;
+    
+    end if;
   
   end;
 
@@ -1661,6 +1690,84 @@ from $$TAB t
       null;
     
     end case;
+    
+  end;
+
+
+  procedure BF_openWorksheet (
+    p_file     in  blob
+  , p_password in varchar2
+  , p_sheet    in  varchar2
+  , p_ctx_id   in  binary_integer
+  )
+  is
+  
+    l_key         number;
+    l_tab_def     QI_definition_t := ctx_cache(p_ctx_id).def_cache;
+    l_start_row   pls_integer := l_tab_def.range.start_ref.r;
+    l_end_row     pls_integer := l_tab_def.range.end_ref.r;
+    bf_cmts       ExcelTableCellList;
+    l_comments    t_comments;
+    
+  begin
+    
+    ctx_cache(p_ctx_id).read_method := BIFF8_READ;
+    
+    l_key := xutl_xls.new_context(
+      p_file         => p_file
+    , p_sheet        => p_sheet
+    , p_password     => p_password
+    , p_cols         => get_column_list(l_tab_def)
+    , p_firstRow     => l_start_row
+    , p_lastRow      => l_end_row
+    , p_readComments => l_tab_def.hasComment
+    );
+    
+    ctx_cache(p_ctx_id).biff8_key := l_key;
+    
+    if l_tab_def.hasComment then
+      bf_cmts := xutl_xls.get_comments(l_key);
+      for i in 1 .. bf_cmts.count loop
+        l_comments(bf_cmts(i).cellCol || to_char(bf_cmts(i).cellRow)) := bf_cmts(i).cellData.accessVarchar2();
+      end loop;
+      ctx_cache(p_ctx_id).comments := l_comments;
+    end if;
+    
+  end;
+
+
+  procedure openWorksheet (
+    p_file      in blob
+  , p_password  in varchar2
+  , p_sheet     in varchar2
+  , p_ctx_id    in binary_integer
+  )
+  is
+  
+    cdf  xutl_cdf.cdf_handle;
+    opc  blob;
+  
+  begin
+    
+    if is_opc_package(p_file) then
+    
+      OX_openWorksheet(p_file, p_sheet, p_ctx_id);
+      
+    elsif xutl_cdf.is_cdf(p_file) then
+      
+      cdf := xutl_cdf.open_file(p_file);
+      if xutl_cdf.stream_exists(cdf, '/Workbook') then
+        BF_openWorksheet(xutl_cdf.get_stream(cdf, '/Workbook'), p_password, p_sheet, p_ctx_id);
+        xutl_cdf.close_file(cdf);
+      elsif xutl_cdf.stream_exists(cdf, '/EncryptedPackage') then
+        opc := xutl_offcrypto.get_package(cdf, p_password);
+        OX_openWorksheet(opc, p_sheet, p_ctx_id);
+      else
+        xutl_cdf.close_file(cdf);
+        raise_application_error(-20720, 'Input file does not appear to be a valid Open Office document');
+      end if;
+    
+    end if;
     
   end;
 
@@ -2067,7 +2174,7 @@ from $$TAB t
   )  
   is
     ctx_id   binary_integer := get_context_id;
-    opc_pkg  blob := get_opc_package(p_file, p_password);
+    --opc_pkg  blob := get_opc_package(p_file, p_password);
   begin
     
     set_nls_cache;
@@ -2075,7 +2182,8 @@ from $$TAB t
     ctx_cache(ctx_id).read_method := p_method;
     ctx_cache(ctx_id).r_num := 0;
     ctx_cache(ctx_id).def_cache := QI_parseTable(p_range, p_cols);
-    OX_openWorksheet(opc_pkg, p_sheet, ctx_id);
+    --OX_openWorksheet(opc_pkg, p_sheet, ctx_id);
+    openWorksheet(p_file, p_password, p_sheet, ctx_id);
      
     p_ctx_id := ctx_id;
         
@@ -2493,6 +2601,165 @@ from $$TAB t
   end;
 
 
+  procedure tableFetch_BIFF8 (
+    p_type   in out nocopy anytype
+  , p_ctx_id in out nocopy binary_integer
+  , nrows    in number
+  , rws      out nocopy anydataset
+  )
+  is
+    
+    type TCellMap is table of ExcelTableCell index by varchar2(3);
+    cellMap     TCellMap;
+    
+    l_rnum      binary_integer;
+    l_key       binary_integer := ctx_cache(p_ctx_id).biff8_key;
+    
+    cells       ExcelTableCellList;
+    
+    l_cols      QI_column_list_t;
+    l_col       varchar2(10);
+    
+    l_varchar2  varchar2(32767);
+    l_number    number;
+    l_date      date;
+    l_clob      clob;
+    l_val       anydata;
+    l_type      varchar2(10);
+    
+    l_prec      pls_integer;
+    l_scale     pls_integer;
+
+    previousRow  integer;
+    currentRow   integer;
+    currentColumn varchar2(3);
+
+    procedure setRow is
+    begin
+      
+      l_rnum := l_rnum + 1;
+    
+      rws.addInstance;
+      rws.piecewise;
+
+      for i in 1 .. l_cols.count loop
+
+        l_col := l_cols(i).metadata.col_ref;
+        
+        if l_cols(i).cell_meta = META_COMMENT then
+      
+          l_varchar2 := get_comment(p_ctx_id, l_col || previousRow);         
+        
+        elsif cellMap.exists(l_col) then 
+          --l_type := cellMap(l_col).cellType;
+          l_type := null;
+          l_val := cellMap(l_col).cellData;
+
+          case l_val.GetTypeName() 
+          when 'SYS.VARCHAR2' then
+            l_type := 's';
+            l_varchar2 := anydata.AccessVarchar2(l_val);
+            l_number := null;
+            l_clob := null;
+          when 'SYS.NUMBER' then
+            l_number := l_val.AccessNumber();
+            l_varchar2 := null;
+          when 'SYS.CLOB' then
+            l_clob := anydata.AccessClob(l_val);
+          end case;
+          
+        else
+          
+          l_type := null;
+          l_varchar2 := null;
+          l_number := null;
+          l_clob := null;
+
+        end if;
+        
+        case l_cols(i).metadata.typecode
+        when dbms_types.TYPECODE_VARCHAR2 then
+          
+          if l_number is not null then
+            l_varchar2 := to_char(l_number);
+          elsif l_clob is not null then
+            l_varchar2 := dbms_lob.substr(l_clob, LOB_CHUNK_SIZE);
+          end if;
+          l_varchar2 := substrb(l_varchar2, 1, l_cols(i).metadata.len);
+          rws.setVarchar2(l_varchar2);
+            
+        when dbms_types.TYPECODE_NUMBER then
+          if l_cols(i).for_ordinality then
+            l_number := l_rnum;
+          elsif l_varchar2 is not null then           
+            l_number := to_number(replace(l_varchar2,'.',get_decimal_sep));
+          end if;
+          l_scale := l_cols(i).metadata.scale;
+          if l_scale is not null then 
+            l_number := round(l_number, l_scale);
+          end if;
+          l_prec := l_cols(i).metadata.prec;
+          if l_prec is not null and log(10, l_number) >= l_prec-l_scale then
+            raise value_out_of_range;
+          end if;
+          rws.setNumber(l_number);
+          
+        when dbms_types.TYPECODE_DATE then
+          
+          if l_number is not null then
+            l_date := get_date_val(l_number);
+          else
+            l_date := get_date_val(l_varchar2, l_cols(i).format, l_type);
+          end if;
+          rws.SetDate(l_date);
+            
+        when dbms_types.TYPECODE_CLOB then
+          
+          if l_clob is null then
+            l_clob := to_clob(l_varchar2);
+          end if;
+          rws.SetClob(l_clob);
+          
+        end case;
+          
+      end loop;
+      
+    end;
+
+  begin
+      
+    l_cols := ctx_cache(p_ctx_id).def_cache.cols;
+    l_rnum := ctx_cache(p_ctx_id).r_num;
+    cells := xutl_xls.iterate_context(l_key);
+      
+    if cells is not null then
+        
+      anydataset.beginCreate(dbms_types.TYPECODE_OBJECT, p_type, rws);
+         
+      for i in 1 .. cells.count loop
+
+        currentRow := cells(i).cellRow;
+        currentColumn := cells(i).cellCol;
+        if currentRow != previousRow then        
+          setRow;
+          cellMap.delete;
+        end if;
+              
+        cellMap(currentColumn) := cells(i);
+        previousRow := currentRow;
+              
+      end loop;
+              
+      setRow;            
+      rws.endCreate;
+        
+      ctx_cache(p_ctx_id).r_num := l_rnum;
+      
+    end if;
+     
+  end;
+
+
   procedure tableFetch (
     p_type   in out nocopy anytype
   , p_ctx_id in out nocopy binary_integer
@@ -2510,13 +2777,10 @@ from $$TAB t
       tableFetch_STREAM(p_type, p_ctx_id, l_nrows, rws);
     when STREAM_READ_XDB then
       tableFetch_XDB(p_type, p_ctx_id, l_nrows, rws);
+    when BIFF8_READ then
+      tableFetch_BIFF8(p_type, p_ctx_id, l_nrows, rws);
     end case;
-  /*  
-  exception
-    when others then
-      tableClose(p_ctx_id);
-      raise;
-    */
+    
   end;
 
 
@@ -2542,6 +2806,10 @@ from $$TAB t
       
       ctx_cache(p_ctx_id).string_cache := t_strings();
       XDB_closeReader(ctx_cache(p_ctx_id).xdb_reader);
+      
+    when BIFF8_READ then
+      
+      xutl_xls.free_context(p_ctx_id);
       
     end case;
     

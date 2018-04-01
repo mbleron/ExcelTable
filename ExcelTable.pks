@@ -3,7 +3,7 @@ create or replace package ExcelTable is
 
   MIT License
 
-  Copyright (c) 2016,2017 Marc Bleron
+  Copyright (c) 2016-2018 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -40,6 +40,9 @@ create or replace package ExcelTable is
                                      are now read from central directory entries
     Marc Bleron       2017-07-14     Support for long identifiers
     Marc Bleron       2017-12-31     Added cell comments extraction
+    Marc Bleron       2018-03-17     Added support for large shared strings in versions 
+                                     prior 11.2.0.2
+    Marc Bleron       2018-02-04     Added support for .xls files
 ====================================================================================== */
 
   -- Read methods  
