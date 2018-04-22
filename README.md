@@ -1,6 +1,6 @@
 # ExcelTable - An Oracle SQL Interface for MS Excel Files
 
-ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xls) as if it were an external table.
+ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls) as if it were an external table.
 It is entirely implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
 > As of version 1.2, a streaming implementation is available for better scalability on large files. 
@@ -8,7 +8,9 @@ It is entirely implemented in PL/SQL using an object type (for the ODCI routines
 
 > As of version 1.3, ExcelTable can read password-encrypted files.
 
-> As of version 2.0, ExcelTable can read old 97-2003 Excel files (.xls)
+> As of version 2.0, ExcelTable can read old 97-2003 Excel files (.xls).
+
+> As od version 2.1, ExcelTable can read .xlsb files.
 
 ## Bug tracker
 
@@ -58,6 +60,8 @@ Create the following objects, in this order :
 @ExcelTableCellList.tps
 @xutl_xls.pks
 @xutl_xls.pkb
+@xutl_xlsb.pks
+@xutl_xlsb.pkb
 @ExcelTableImpl.tps
 @ExcelTable.pks
 @ExcelTable.pkb
@@ -422,6 +426,9 @@ SQL> select t.*
 
 
 ## CHANGELOG
+### 2.1 (2018-04-22)
+* Added support for Excel Binary File Format (.xlsb)
+
 ### 2.0 (2018-04-01)
 * Added support for Excel 97-2003 files (.xls)
 
