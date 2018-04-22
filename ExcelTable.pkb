@@ -43,7 +43,12 @@ create or replace package body ExcelTable is
   DUPLICATE_COL_NAME     constant varchar2(100) := 'Duplicate column name ''%s''';
   SHEET_NOT_FOUND        constant varchar2(100) := 'Sheet not found : ''%s''';
 
-  BIFF8_READ             constant binary_integer := -1;
+  FILE_XLSX              constant pls_integer := 0;
+  FILE_XLSB              constant pls_integer := 1;
+  FILE_XLS               constant pls_integer := 2;
+  FILE_ODS               constant pls_integer := 3;
+  FILE_CSV               constant pls_integer := 4;
+  
   -- File type
   SIGNATURE_OPC          constant binary_integer := 0;
   SIGNATURE_CDF          constant binary_integer := 1;
@@ -53,6 +58,8 @@ create or replace package body ExcelTable is
   --CT_STYLES              constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
   --CT_WORKBOOK            constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml';
   --CT_WORKBOOK_ME         constant varchar2(100) := 'application/vnd.ms-excel.sheet.macroEnabled.main+xml';
+  CT_XL_BINARY_FILE      constant varchar2(100) := 'application/vnd.ms-excel.sheet.binary.macroEnabled.main';
+  CT_SHAREDSTRINGS_BIN   constant varchar2(100) := 'application/vnd.ms-excel.sharedStrings';
   CT_SHAREDSTRINGS       constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
   --CT_WORKSHEET           constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
   SML_NSMAP              constant varchar2(100) := 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
@@ -66,6 +73,9 @@ create or replace package body ExcelTable is
   MAX_STRING_SIZE        pls_integer;
   VC2_MAXSIZE            pls_integer;
   MAX_IDENT_LENGTH       pls_integer;
+
+  MAX_COLUMN_NUMBER      pls_integer;
+  MAX_ROW_NUMBER         pls_integer;
 
   value_out_of_range     exception;
   pragma exception_init (value_out_of_range, -1438);
@@ -121,8 +131,8 @@ create or replace package body ExcelTable is
   type t_entry is record (offset integer, csize integer, ucsize integer, crc32 raw(4));
   type t_entries is table of t_entry index by varchar2(260);
   type t_archive is record (entries t_entries, content blob);
-  type t_workbook is record (path varchar2(260), content xmltype, rels xmltype);
-  type t_exceldoc is record (file t_archive, content_map xmltype, workbook t_workbook);
+  type t_workbook is record (path varchar2(260), content xmltype, content_binary blob, rels xmltype);
+  type t_exceldoc is record (file t_archive, content_map xmltype, workbook t_workbook, is_xlsb boolean);
   
   -- string cache
   type t_string_rec is record (strval varchar2(32767), lobval clob);
@@ -147,7 +157,8 @@ create or replace package body ExcelTable is
   
   -- local context cache
   type t_context is record (
-    read_method  binary_integer
+    file_type    pls_integer
+  , read_method  pls_integer
   , def_cache    QI_definition_t
   , string_cache t_strings
   , comments     t_comments
@@ -155,10 +166,9 @@ create or replace package body ExcelTable is
   , r_num        binary_integer
   , dom_reader   t_dom_reader
   , xdb_reader   t_xdb_reader
-  , stream_key   integer
+  , extern_key   integer
   , ws_content   blob
   , table_info   t_table_info
-  , biff8_key    pls_integer
   );
   
   type t_ctx_cache is table of t_context index by binary_integer;
@@ -225,6 +235,17 @@ create or replace package body ExcelTable is
   end;  
 
 
+  procedure set_sheet_limits (
+    column_number  in pls_integer
+  , rw_number      in pls_integer
+  )
+  is
+  begin
+    MAX_COLUMN_NUMBER := column_number;
+    MAX_ROW_NUMBER := rw_number;
+  end;
+  
+
   procedure init is
     l_compatibility  DB_VERSION%type;
   begin
@@ -234,6 +255,7 @@ create or replace package body ExcelTable is
     MAX_STRING_SIZE := get_max_string_size();
     VC2_MAXSIZE := trunc(MAX_STRING_SIZE / MAX_CHAR_SIZE);
     MAX_IDENT_LENGTH := get_max_ident_length(l_compatibility);
+    set_sheet_limits(16384, 1048576);
   
     token_map(T_NAME)   := '<name>';
     token_map(T_INT)    := '<integer>';
@@ -255,22 +277,21 @@ create or replace package body ExcelTable is
   
   
   function get_column_list (
-    p_def_cache in QI_definition_t
+    def_cache in QI_definition_t
   )
   return varchar2
   is
-    l_list   varchar2(4000);
+    column_list  varchar2(4000);
+    col_ref      varchar2(3);
   begin
-    for i in 1 .. p_def_cache.cols.count loop
-      if i > 1 then
-        l_list := l_list || ',';
-      end if;
-      l_list := l_list || p_def_cache.cols(i).metadata.col_ref;
+    col_ref := def_cache.refSet.first;
+    while col_ref is not null loop
+      column_list := column_list || ',' || col_ref;
+      col_ref := def_cache.refSet.next(col_ref);
     end loop;
-    return l_list;
+    return substr(column_list, 2);
   end;
-  
-  
+   
   function checkSignature (p_file in blob)
   return binary_integer
   is
@@ -283,7 +304,6 @@ create or replace package body ExcelTable is
     end if;
     return output;
   end;
-
   
   function is_opc_package (p_file in blob)
   return boolean
@@ -292,7 +312,7 @@ create or replace package body ExcelTable is
     return ( dbms_lob.substr(p_file, 4) = hextoraw('504B0304') );
   end;
 
-  
+ 
   function get_opc_package (
     p_file     in blob
   , p_password in varchar2
@@ -318,6 +338,17 @@ create or replace package body ExcelTable is
     end case;
     return opc_pkg;
   end;
+  
+
+  function blob2xml (
+    p_content  in blob
+  )
+  return xmltype
+  is
+  begin
+    return xmltype(p_content, nls_charset_id('AL32UTF8'));
+  end;
+
    
   -- ----------------------------------------------------------------------------------------------
   -- Open a zip archive and read entries from central directory segment
@@ -428,12 +459,13 @@ create or replace package body ExcelTable is
   return xmltype
   is
   begin
-    return xmltype(Zip_getEntry(p_archive, p_partname), nls_charset_id('AL32UTF8'));
+    return blob2xml(Zip_getEntry(p_archive, p_partname));
   end;
   
   -- convert a base26-encoded number to decimal
   function base26decode (p_str in varchar2) 
   return pls_integer 
+  result_cache
   is
     l_result  pls_integer;
     l_base    pls_integer := 1;
@@ -450,7 +482,8 @@ create or replace package body ExcelTable is
 
   -- convert a number to base26 string
   function base26encode (p_num in pls_integer) 
-  return varchar2 
+  return varchar2
+  result_cache
   is
     l_result  varchar2(3);
     l_num     pls_integer := p_num;
@@ -839,7 +872,7 @@ create or replace package body ExcelTable is
       error(INVALID_COL_REF, p_col_ref);
     end if;
     l_coln := base26decode(p_col_ref);
-    if l_coln not between nvl(p_range.start_ref.cn, 1) and nvl(p_range.end_ref.cn, 16384) then
+    if l_coln not between nvl(p_range.start_ref.cn, 1) and nvl(p_range.end_ref.cn, MAX_COLUMN_NUMBER) then
       error(INVALID_COL, p_col_ref);
     end if;   
   end;
@@ -867,9 +900,6 @@ create or replace package body ExcelTable is
     start_col := nvl(tdef.range.start_ref.cn, 1);
     end_col := nvl(tdef.range.end_ref.cn, col_cnt);
     pos := 0;
-    
-    --tdef.colSet := QI_column_set_t();
-    --tdef.colSet.extend(col_cnt);
     
     for i in 1 .. col_cnt loop
       if tdef.cols(i).for_ordinality then
@@ -950,11 +980,11 @@ create or replace package body ExcelTable is
       end if;
       l_coln := base26decode(l_col);
       -- validate column reference
-      if l_coln > 16384 then
+      if l_coln > MAX_COLUMN_NUMBER then
         error(RANGE_INVALID_COL, l_col);
       end if;
       l_rnum := to_number(l_row);
-      if l_rnum not between 1 and 1048576 then
+      if l_rnum not between 1 and MAX_ROW_NUMBER then
         error(RANGE_INVALID_ROW, l_rnum);
       end if;
       p_ref.r := l_rnum;
@@ -1323,6 +1353,29 @@ from $$TAB t
   end;
   
 
+  function OX_hasContentType (
+    p_doc          in t_exceldoc
+  , p_content_type in varchar2
+  )
+  return boolean
+  is
+    cnt  pls_integer;
+  begin
+
+    select count(*)
+    into cnt
+    from xmltable(
+           xmlnamespaces(default 'http://schemas.openxmlformats.org/package/2006/content-types')
+         , '/Types/*[@ContentType=$type]'
+           passing p_doc.content_map
+                 , p_content_type as "type"
+         ) x ;
+
+    return (cnt > 0);
+    
+  end;  
+
+
   function OX_getPathByType (
     p_doc          in out nocopy t_exceldoc
   , p_content_type in varchar2
@@ -1383,18 +1436,24 @@ from $$TAB t
   begin
 
     begin
-      select x.rid
-      into l_rid
-      from xmltable(
-             xmlnamespaces(
-               default 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
-             , 'http://schemas.openxmlformats.org/officeDocument/2006/relationships' as "r"
-             )
-           , '/workbook/sheets/sheet[@name=$wsName]'
-             passing p_doc.workbook.content
-                   , p_sheetname as "wsName"
-             columns rid varchar2(30) path '@r:id'
-           ) x ;
+      
+      if p_doc.is_xlsb then
+        l_rid := xutl_xlsb.get_sheetRelId(p_doc.workbook.content_binary, p_sheetname);
+      else
+        select x.rid
+        into l_rid
+        from xmltable(
+               xmlnamespaces(
+                 default 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+               , 'http://schemas.openxmlformats.org/officeDocument/2006/relationships' as "r"
+               )
+             , '/workbook/sheets/sheet[@name=$wsName]'
+               passing p_doc.workbook.content
+                     , p_sheetname as "wsName"
+               columns rid varchar2(30) path '@r:id'
+             ) x ;
+      end if;
+    
     exception
       when no_data_found then
         raise_application_error(-20723, utl_lms.format_message(SHEET_NOT_FOUND, p_sheetname));
@@ -1546,6 +1605,9 @@ from $$TAB t
     l_sheet_rels       xmltype;
     l_comments         t_comments;
     
+    l_comment_part_binary  blob;
+    l_comment_list         ExcelTableCellList;
+    
   begin
     
     l_sheet_rels_path := regexp_replace(sheet_path, '(.*)/(.*)$', '\1/_rels/\2.rels');
@@ -1572,21 +1634,33 @@ from $$TAB t
     
     if l_comments_path is not null then
       
-      l_comments_part := Zip_getXML(doc.file, l_comments_path);
-    
-      for r in (
-        select x.cell_ref, x.cell_cmt
-        from xmltable(
-               xmlnamespaces(default 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
-             , '/comments/commentList/comment'
-               passing l_comments_part
-               columns cell_ref varchar2(10)   path '@ref'
-                     , cell_cmt varchar2(4000) path 'text'
-             ) x
-      )
-      loop
-        l_comments(r.cell_ref) := r.cell_cmt;
-      end loop;
+      if doc.is_xlsb then
+      
+        l_comment_part_binary := Zip_getEntry(doc.file, l_comments_path);
+        l_comment_list := xutl_xlsb.get_comments(l_comment_part_binary);
+        for i in 1 .. l_comment_list.count loop
+          l_comments(l_comment_list(i).cellCol || to_char(l_comment_list(i).cellRow)) := l_comment_list(i).cellData.accessVarchar2();
+        end loop;
+      
+      else
+        
+        l_comments_part := Zip_getXML(doc.file, l_comments_path);
+      
+        for r in (
+          select x.cell_ref, x.cell_cmt
+          from xmltable(
+                 xmlnamespaces(default 'http://schemas.openxmlformats.org/spreadsheetml/2006/main')
+               , '/comments/commentList/comment'
+                 passing l_comments_part
+                 columns cell_ref varchar2(10)   path '@ref'
+                       , cell_cmt varchar2(4000) path 'text'
+               ) x
+        )
+        loop
+          l_comments(r.cell_ref) := r.cell_cmt;
+        end loop;
+      
+      end if;
       
       ctx_cache(ctx_id).comments := l_comments;
     
@@ -1603,8 +1677,16 @@ from $$TAB t
   begin
     p_doc.file := Zip_openArchive(p_file);
     p_doc.content_map := Zip_getXML(p_doc.file, '[Content_Types].xml');
+    -- Excel Binary File (.xlsb)?
+    p_doc.is_xlsb := OX_hasContentType(p_doc, CT_XL_BINARY_FILE);
     p_doc.workbook.path := OX_getWorkbookPath(p_doc);
-    p_doc.workbook.content := Zip_getXML(p_doc.file, p_doc.workbook.path);
+    
+    if p_doc.is_xlsb then
+      p_doc.workbook.content_binary := Zip_getEntry(p_doc.file, p_doc.workbook.path);
+    else
+      p_doc.workbook.content := Zip_getXML(p_doc.file, p_doc.workbook.path);
+    end if;
+    
     p_doc.workbook.rels := Zip_getXML(p_doc.file, regexp_replace(p_doc.workbook.path, '(.*)/(.*)$', '\1/_rels/\2.rels'));
   end;
 
@@ -1620,6 +1702,7 @@ from $$TAB t
     l_doc         dbms_xmldom.DOMDocument;
     l_rlist       dbms_xmldom.DOMNodeList;
     l_ws_content  blob;
+    l_sst         blob;
     l_sheet       xmltype;
     l_sheetPath   varchar2(260);
     l_key         number;
@@ -1639,57 +1722,81 @@ from $$TAB t
       OX_readComments(l_xldoc, l_sheetPath, p_ctx_id);
     end if;
     
-    case l_read_method 
-    when DOM_READ then
-    
-      OX_loadStringCache (l_xldoc, p_ctx_id);     
-      l_sheet := Zip_getXML(l_xldoc.file, l_sheetPath);   
-      l_doc := dbms_xmldom.newDOMDocument(l_sheet);
-
-      if l_start_row is not null then
-        l_xpath := l_xpath || '[@r>=' || l_start_row || ']';
-      end if;
-      if l_end_row is not null then
-        l_xpath := l_xpath || '[@r<=' || l_end_row || ']';
-      end if;
+    if l_xldoc.is_xlsb then
       
-      l_rlist := dbms_xslprocessor.selectNodes(dbms_xmldom.makeNode(l_doc), l_xpath, SML_NSMAP);
-
-      if dbms_xmldom.isNull(l_rlist) then
-        ctx_cache(p_ctx_id).done := true;
-      end if;
-      
-      ctx_cache(p_ctx_id).dom_reader.doc := l_doc;
-      ctx_cache(p_ctx_id).dom_reader.rlist := l_rlist;
-      ctx_cache(p_ctx_id).dom_reader.rlist_idx := 0;
-      
-    when STREAM_READ then
-
       l_ws_content := Zip_getEntry(l_xldoc.file, l_sheetPath);
-      --dbms_output.put_line(VC2_MAXSIZE);
-      l_key := newContext(
-                 l_ws_content
-               , Zip_getEntry(l_xldoc.file, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS))
-               , get_column_list(l_tab_def)
-               , nvl(l_start_row, 1)
-               , nvl(l_end_row, -1)
-               , MAX_STRING_SIZE
-               );
+      l_sst := Zip_getEntry(l_xldoc.file, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS_BIN));
       
-      ctx_cache(p_ctx_id).stream_key := l_key;
-      ctx_cache(p_ctx_id).ws_content := l_ws_content;
-    
-    when STREAM_READ_XDB then
+      l_key := xutl_xlsb.new_context(
+        l_ws_content
+      , l_sst
+      , get_column_list(l_tab_def)
+      , l_start_row                
+      , l_end_row
+      );
       
-      OX_loadStringCache (l_xldoc, p_ctx_id);     
-      l_sheet := Zip_getXML(l_xldoc.file, l_sheetPath);
-      XDB_createReader(ctx_cache(p_ctx_id).xdb_reader, l_sheet, l_start_row, l_end_row);
+      dbms_lob.freetemporary(l_sst);
+      ctx_cache(p_ctx_id).extern_key := l_key;
+      ctx_cache(p_ctx_id).file_type := FILE_XLSB;   
       
     else
-      -- invalid read method specified
-      null;
     
-    end case;
+      ctx_cache(p_ctx_id).file_type := FILE_XLSX;
+    
+      case l_read_method 
+      when DOM_READ then
+      
+        OX_loadStringCache (l_xldoc, p_ctx_id);     
+        l_sheet := Zip_getXML(l_xldoc.file, l_sheetPath);   
+        l_doc := dbms_xmldom.newDOMDocument(l_sheet);
+
+        if l_start_row is not null then
+          l_xpath := l_xpath || '[@r>=' || l_start_row || ']';
+        end if;
+        if l_end_row is not null then
+          l_xpath := l_xpath || '[@r<=' || l_end_row || ']';
+        end if;
+        
+        l_rlist := dbms_xslprocessor.selectNodes(dbms_xmldom.makeNode(l_doc), l_xpath, SML_NSMAP);
+
+        if dbms_xmldom.isNull(l_rlist) then
+          ctx_cache(p_ctx_id).done := true;
+        end if;
+        
+        ctx_cache(p_ctx_id).dom_reader.doc := l_doc;
+        ctx_cache(p_ctx_id).dom_reader.rlist := l_rlist;
+        ctx_cache(p_ctx_id).dom_reader.rlist_idx := 0;
+        
+      when STREAM_READ then
+
+        l_ws_content := Zip_getEntry(l_xldoc.file, l_sheetPath);
+        l_sst := Zip_getEntry(l_xldoc.file, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS));
+        l_key := newContext(
+                   l_ws_content
+                 , l_sst
+                 , get_column_list(l_tab_def)
+                 , nvl(l_start_row, 1)
+                 , nvl(l_end_row, -1)
+                 , MAX_STRING_SIZE
+                 );
+                 
+        dbms_lob.freetemporary(l_sst);
+        ctx_cache(p_ctx_id).extern_key := l_key;
+        ctx_cache(p_ctx_id).ws_content := l_ws_content;
+      
+      when STREAM_READ_XDB then
+        
+        OX_loadStringCache (l_xldoc, p_ctx_id);     
+        l_sheet := Zip_getXML(l_xldoc.file, l_sheetPath);
+        XDB_createReader(ctx_cache(p_ctx_id).xdb_reader, l_sheet, l_start_row, l_end_row);
+        
+      else
+        -- invalid read method specified
+        null;
+      
+      end case;
+    
+    end if;
     
   end;
 
@@ -1711,7 +1818,7 @@ from $$TAB t
     
   begin
     
-    ctx_cache(p_ctx_id).read_method := BIFF8_READ;
+    ctx_cache(p_ctx_id).file_type := FILE_XLS;
     
     l_key := xutl_xls.new_context(
       p_file         => p_file
@@ -1723,7 +1830,7 @@ from $$TAB t
     , p_readComments => l_tab_def.hasComment
     );
     
-    ctx_cache(p_ctx_id).biff8_key := l_key;
+    ctx_cache(p_ctx_id).extern_key := l_key;
     
     if l_tab_def.hasComment then
       bf_cmts := xutl_xls.get_comments(l_key);
@@ -1751,6 +1858,7 @@ from $$TAB t
     
     if is_opc_package(p_file) then
     
+      
       OX_openWorksheet(p_file, p_sheet, p_ctx_id);
       
     elsif xutl_cdf.is_cdf(p_file) then
@@ -1760,11 +1868,14 @@ from $$TAB t
         BF_openWorksheet(xutl_cdf.get_stream(cdf, '/Workbook'), p_password, p_sheet, p_ctx_id);
         xutl_cdf.close_file(cdf);
       elsif xutl_cdf.stream_exists(cdf, '/EncryptedPackage') then
+        if p_password is null then
+          raise_application_error(-20730, 'The workbook is encrypted but no password was provided');
+        end if;
         opc := xutl_offcrypto.get_package(cdf, p_password);
         OX_openWorksheet(opc, p_sheet, p_ctx_id);
       else
         xutl_cdf.close_file(cdf);
-        raise_application_error(-20720, 'Input file does not appear to be a valid Open Office document');
+        raise_application_error(-20720, 'Input file does not appear to be a valid MS Excel document');
       end if;
     
     end if;
@@ -2174,7 +2285,6 @@ from $$TAB t
   )  
   is
     ctx_id   binary_integer := get_context_id;
-    --opc_pkg  blob := get_opc_package(p_file, p_password);
   begin
     
     set_nls_cache;
@@ -2182,7 +2292,6 @@ from $$TAB t
     ctx_cache(ctx_id).read_method := p_method;
     ctx_cache(ctx_id).r_num := 0;
     ctx_cache(ctx_id).def_cache := QI_parseTable(p_range, p_cols);
-    --OX_openWorksheet(opc_pkg, p_sheet, ctx_id);
     openWorksheet(p_file, p_password, p_sheet, ctx_id);
      
     p_ctx_id := ctx_id;
@@ -2286,7 +2395,7 @@ from $$TAB t
     cellMap     TCellMap;
     
     l_rnum      binary_integer;
-    l_key       binary_integer := ctx_cache(p_ctx_id).stream_key;
+    l_key       binary_integer := ctx_cache(p_ctx_id).extern_key;
     
     cells       ExcelTableCellList;
     
@@ -2601,11 +2710,12 @@ from $$TAB t
   end;
 
 
-  procedure tableFetch_BIFF8 (
-    p_type   in out nocopy anytype
-  , p_ctx_id in out nocopy binary_integer
-  , nrows    in number
-  , rws      out nocopy anydataset
+  procedure tableFetch_Binary (
+    p_type     in out nocopy anytype
+  , p_ctx_id   in binary_integer
+  , nrows      in number
+  , file_type  in pls_integer
+  , rws        out nocopy anydataset
   )
   is
     
@@ -2613,7 +2723,7 @@ from $$TAB t
     cellMap     TCellMap;
     
     l_rnum      binary_integer;
-    l_key       binary_integer := ctx_cache(p_ctx_id).biff8_key;
+    l_key       binary_integer := ctx_cache(p_ctx_id).extern_key;
     
     cells       ExcelTableCellList;
     
@@ -2650,8 +2760,8 @@ from $$TAB t
       
           l_varchar2 := get_comment(p_ctx_id, l_col || previousRow);         
         
-        elsif cellMap.exists(l_col) then 
-          --l_type := cellMap(l_col).cellType;
+        elsif cellMap.exists(l_col) then
+        
           l_type := null;
           l_val := cellMap(l_col).cellData;
 
@@ -2730,7 +2840,12 @@ from $$TAB t
       
     l_cols := ctx_cache(p_ctx_id).def_cache.cols;
     l_rnum := ctx_cache(p_ctx_id).r_num;
-    cells := xutl_xls.iterate_context(l_key);
+    
+    if file_type = FILE_XLS then
+      cells := xutl_xls.iterate_context(l_key);
+    else
+      cells := xutl_xlsb.iterate_context(l_key, nrows);
+    end if;
       
     if cells is not null then
         
@@ -2770,15 +2885,23 @@ from $$TAB t
     l_nrows  number := least(nrows, fetch_size);
   begin
     
-    case ctx_cache(p_ctx_id).read_method
-    when DOM_READ then
-      tableFetch_DOM(p_type, p_ctx_id, l_nrows, rws);
-    when STREAM_READ then
-      tableFetch_STREAM(p_type, p_ctx_id, l_nrows, rws);
-    when STREAM_READ_XDB then
-      tableFetch_XDB(p_type, p_ctx_id, l_nrows, rws);
-    when BIFF8_READ then
-      tableFetch_BIFF8(p_type, p_ctx_id, l_nrows, rws);
+    case ctx_cache(p_ctx_id).file_type
+    when FILE_XLSX then
+      
+      case ctx_cache(p_ctx_id).read_method
+      when DOM_READ then
+        tableFetch_DOM(p_type, p_ctx_id, l_nrows, rws);
+      when STREAM_READ then
+        tableFetch_STREAM(p_type, p_ctx_id, l_nrows, rws);
+      when STREAM_READ_XDB then
+        tableFetch_XDB(p_type, p_ctx_id, l_nrows, rws);
+      end case;
+    
+    when FILE_XLS then
+      tableFetch_Binary(p_type, p_ctx_id, l_nrows, FILE_XLS, rws);
+    when FILE_XLSB then
+      tableFetch_Binary(p_type, p_ctx_id, l_nrows, FILE_XLSB, rws);
+    
     end case;
     
   end;
@@ -2790,61 +2913,42 @@ from $$TAB t
   is
   begin
     
-    case ctx_cache(p_ctx_id).read_method
-    when DOM_READ then
+    case ctx_cache(p_ctx_id).file_type
+    when FILE_XLSX then
+  
+      case ctx_cache(p_ctx_id).read_method
+      when DOM_READ then
+        
+        ctx_cache(p_ctx_id).string_cache := t_strings();
+        dbms_xmldom.freeNodeList(ctx_cache(p_ctx_id).dom_reader.rlist);
+        dbms_xmldom.freeDocument(ctx_cache(p_ctx_id).dom_reader.doc); 
+        
+      when STREAM_READ then
+        
+        closeContext(ctx_cache(p_ctx_id).extern_key);
+        dbms_lob.freetemporary(ctx_cache(p_ctx_id).ws_content);
+        
+      when STREAM_READ_XDB then
+        
+        ctx_cache(p_ctx_id).string_cache := t_strings();
+        XDB_closeReader(ctx_cache(p_ctx_id).xdb_reader);
+        
+      end case;
       
-      ctx_cache(p_ctx_id).string_cache := t_strings();
-      dbms_xmldom.freeNodeList(ctx_cache(p_ctx_id).dom_reader.rlist);
-      dbms_xmldom.freeDocument(ctx_cache(p_ctx_id).dom_reader.doc); 
+    when FILE_XLS then
       
-    when STREAM_READ then
+      xutl_xls.free_context(ctx_cache(p_ctx_id).extern_key);
       
-      closeContext(ctx_cache(p_ctx_id).stream_key);
-      dbms_lob.freetemporary(ctx_cache(p_ctx_id).ws_content);
+    when FILE_XLSB then
       
-    when STREAM_READ_XDB then
-      
-      ctx_cache(p_ctx_id).string_cache := t_strings();
-      XDB_closeReader(ctx_cache(p_ctx_id).xdb_reader);
-      
-    when BIFF8_READ then
-      
-      xutl_xls.free_context(p_ctx_id);
-      
-    end case;
-    
-    ctx_cache.delete(p_ctx_id);
-    
-  end;
-
-  /*
-  procedure tableClose2 (
-    p_ctx_id  in binary_integer
-  )
-  is
-    l_ctx   t_context := ctx_cache(p_ctx_id);
-  begin
-    
-    case l_ctx.read_method
-    when DOM_READ then
-      
-      dbms_xmldom.freeNodeList(l_ctx.ws_rlist);
-      dbms_xmldom.freeDocument(l_ctx.ws_doc);
-      if l_ctx.string_cache is not null then
-        l_ctx.string_cache.delete;
-      end if;
-      
-    when STREAM_READ then
-      
-      closeContext(l_ctx.stream_key);
-      dbms_lob.freetemporary(l_ctx.ws_content);
+      xutl_xlsb.free_context(ctx_cache(p_ctx_id).extern_key);
+      --dbms_lob.freetemporary(ctx_cache(p_ctx_id).ws_content);
       
     end case;
     
     ctx_cache.delete(p_ctx_id);
     
   end;
-  */
 
 
   function getFile (

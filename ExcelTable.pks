@@ -40,15 +40,16 @@ create or replace package ExcelTable is
                                      are now read from central directory entries
     Marc Bleron       2017-07-14     Support for long identifiers
     Marc Bleron       2017-12-31     Added cell comments extraction
+    Marc Bleron       2018-02-04     Added support for .xls files
     Marc Bleron       2018-03-17     Added support for large shared strings in versions 
                                      prior 11.2.0.2
-    Marc Bleron       2018-02-04     Added support for .xls files
+    Marc Bleron       2018-04-21     Added support for .xlsb files
 ====================================================================================== */
 
   -- Read methods  
-  DOM_READ               constant binary_integer := 0;
-  STREAM_READ            constant binary_integer := 1;
-  STREAM_READ_XDB        constant binary_integer := 2;
+  DOM_READ               constant pls_integer := 0;
+  STREAM_READ            constant pls_integer := 1;
+  STREAM_READ_XDB        constant pls_integer := 2;
 
   subtype DMLContext is binary_integer;
 
