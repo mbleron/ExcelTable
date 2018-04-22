@@ -147,6 +147,16 @@ It may be useful in PL/SQL code where static reference to table function returni
 ## 
 #### Columns syntax specification
 
+
+![Column expression syntax diagram](./resources/diagram_column_expr-900.png "Column expression syntax diagram")
+
+_Metadata_clause::=_  
+
+
+
+![Column metadata syntax diagram](./resources/diagram_column_metadata-406.png "Column metadata syntax diagram")
+
+
 Column names must be declared using a quoted identifier.
 
 Supported data types are :
