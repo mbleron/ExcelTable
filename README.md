@@ -1,16 +1,16 @@
 # ExcelTable - An Oracle SQL Interface for MS Excel Files
 
-ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls) as if it were an external table.
-It is entirely implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
+ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls), or ODF spreadsheet file (.ods) as if it were an external table.  
+It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
-> As of version 1.2, a streaming implementation is available for better scalability on large files. 
-> This feature requires the server-side Java VM.
+## What's New in...
+> Version 2.0 : ExcelTable can read old 97-2003 Excel files (.xls).
 
-> As of version 1.3, ExcelTable can read password-encrypted files.
+> Version 2.1 : ExcelTable can read .xlsb files.
 
-> As of version 2.0, ExcelTable can read old 97-2003 Excel files (.xls).
-
-> As od version 2.1, ExcelTable can read .xlsb files.
+> Version 2.2 : 
+> ExcelTable can read ODF (OpenDocument) spreadsheet files (.ods).  
+> Support for TIMESTAMP data type
 
 ## Bug tracker
 
@@ -26,7 +26,7 @@ ExcelTable requires Oracle Database 11\.2\.0\.1 and onwards.
 
 ### DBA preliminary tasks
 
-On database versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally.
+On database versions prior to 11\.2\.0\.4, a temporary XMLType table is used internally to read .xlsx files with the default DOM method.
 The owner requires the CREATE TABLE privilege in this case : 
 ```sql
 grant create table to <user>;
@@ -71,8 +71,12 @@ Create the following objects, in this order :
 
 ### Java
 
-If you want to use the streaming method, some Java classes - packed in a jar file - have to be deployed in the database.  
-The jar files to deploy depend on the database version.
+ExcelTable requires additional Java classes for the following features : 
+
+* Streaming read method for .xlsx/.xlsm files
+* Reading password-protected ODF spreadsheets encrypted using the Blowfish algorithm (ODF 1.0/1.1)
+
+JAR files to deploy depend on the database version : 
 
 * Versions < 11\.2\.0\.4  
 Except for version 11\.2\.0\.4 which supports JDK 6, Oracle 11g only supports JDK 5 (Java 1.5).
@@ -111,12 +115,12 @@ return anydataset pipelined
 using ExcelTableImpl;
 ```
 
-* `p_file` : Input Excel file (.xlsx, .xlsm or .xls format).
+* `p_file` : Input Office file (.xlsx, .xlsm, .xlsb, .xls or .ods format).
 A helper function `ExcelTable.getFile` is available to directly reference the file from a directory.
 * `p_sheet` : Worksheet name
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
-* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored when reading from a .xls file.
+* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored if the file is not a .xlsx or .xlsm file.
 * `p_password` : Optional - password used to encrypt the Excel document
 
 
@@ -167,16 +171,17 @@ Supported data types are :
 
 * DATE - with optional format mask. The format mask is used if the value is stored as text in the spreadsheet, otherwise the date value is assumed to be stored as date in Excel's internal serial format.
 
+* TIMESTAMP - with optional scale and format mask specifications. The format mask is used if the value is stored as text in the spreadsheet, otherwise the timestamp value is assumed to be stored in Excel's internal serial format.
+
 * CLOB
 
 A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE's one) is also available to autogenerate a sequence number.
 
 Each column definition (except for the one qualified with FOR ORDINALITY) may be complemented with an optional "COLUMN" clause to explicitly target a named column in the spreadsheet, instead of relying on the order of the declarations (relative to the range).
 Positional and named column definitions cannot be mixed.
-
-New in version 1.6 : 
+ 
 ExcelTable can also extract cell comments and project them as regular columns.  
-In order to do so, the column syntax has been extended with a FOR METADATA clause : 
+In order to do so, add this specific FOR METADATA clause : 
 
 `FOR METADATA (COMMENT)`
 
@@ -191,6 +196,7 @@ Examples :
 , "COL4"  date           format 'YYYY-MM-DD'
 , "COL5"  number(10,2)
 , "COL6"  varchar2(5)
+, "COL7"  timestamp(3)   format 'YYYY-MM-DD HH24:MI:SS.FF'
 ```
 
 ```
@@ -230,10 +236,20 @@ Latest versions (2007+) based on [ECMA-376](http://www.ecma-international.org/pu
 | 2013            | Agile   | AES-256    | SHA512         | CBC
 | 2016            | Agile   | AES-256    | SHA512         | CBC
 
-Oracle, through DBMS_CRYPTO API, only supports SHA-2 algorithms (SHA256, 384, 512) starting from 12c.  
-Therefore, in prior versions, the [OfficeCrypto](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) implementation cannot read Office 2013 (and onwards) documents encrypted with the default options.  
+As for ODF : 
 
-Full specs available on MSDN : [[MS-OFFCRYPTO]](https://msdn.microsoft.com/en-us/library/cc313071)  
+| ODF version     | Encryption | Hash algorithm | Block chaining  
+| :-------------- | :--------- | :------------- | :-------------
+| 1.0 / 1.1       | Blowfish   | SHA-1          | CFB
+| 1.2             | AES-256    | SHA256         | CBC
+
+Oracle, through DBMS_CRYPTO API, only supports SHA-2 algorithms (SHA256, 384, 512) starting from 12c.  
+Therefore, in prior versions, the [OfficeCrypto](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) implementation cannot read Office 2013 or ODF 1.2 (and onwards) documents encrypted with the default options.  
+
+
+References : 
+Office Crypto full specs are available on MSDN : [[MS-OFFCRYPTO]](https://msdn.microsoft.com/en-us/library/cc313071)  
+For the OpenDocument standard, please refer to : [OASIS ODF v1.2 (Encryption)](http://docs.oasis-open.org/office/v1.2/os/OpenDocument-v1.2-os-part3.html#__RefHeading__752811_826425813)
 
 
 ## 
@@ -434,8 +450,44 @@ SQL> select t.*
 
 ```
 
+* Extracting first three columns from encrypted .ods file [test01c.ods](./samples/test01c.ods) : 
+
+```
+SQL> select t.*
+  2  from table(
+  3         ExcelTable.getRows(
+  4           ExcelTable.getFile('TMP_DIR','test01c.ods')
+  5         , 'Feuille1'
+  6         , q'{
+  7             "COL_1"  number
+  8           , "COL_2"  number
+  9           , "COL_3"  timestamp(3)
+ 10           }'
+ 11         , p_range => 'A1'
+ 12         , p_method => null
+ 13         , p_password => 'pass123'
+ 14         )
+ 15       ) t
+ 16  ;
+ 
+     COL_1      COL_2 COL_3
+---------- ---------- ---------------------------
+         1    1.23456 25-DEC-90 12.00.00.000 AM
+         2       1E-5 01-JAN-00 12.00.00.000 AM
+         3       1E58 11-MAY-18 12.00.00.000 AM
+         4 9999999999 10-JUN-18 03.20.37.000 PM
+         5       -123 11-JUN-18 03.20.37.120 PM
+         6         -1 
+ 
+6 rows selected.
+ 
+```
 
 ## CHANGELOG
+### 2.2 (2018-07-07)
+* Added support for OpenDocument (ODF) spreadsheets (.ods), including encrypted files
+* Added support for TIMESTAMP data type
+
 ### 2.1 (2018-04-22)
 * Added support for Excel Binary File Format (.xlsb)
 

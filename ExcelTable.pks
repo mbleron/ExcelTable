@@ -44,6 +44,8 @@ create or replace package ExcelTable is
     Marc Bleron       2018-03-17     Added support for large shared strings in versions 
                                      prior 11.2.0.2
     Marc Bleron       2018-04-21     Added support for .xlsb files
+    Marc Bleron       2018-04-24     Unzip utility : detection of stored files (no comp)
+    Marc Bleron       2018-05-12     Added support for ODF spreadsheets (.ods)
 ====================================================================================== */
 
   -- Read methods  
@@ -66,10 +68,11 @@ create or replace package ExcelTable is
     column_list    ::= column_expr { "," column_expr }
     column_expr    ::= ( identifier datatype [ "column" string_literal ] [ for_metadata ]
                        | identifier for_ordinality )
-    datatype       ::= ( number_expr | varchar2_expr | date_expr | clob_expr )
+    datatype       ::= ( number_expr | varchar2_expr | date_expr | timestamp_expr | clob_expr )
     number_expr    ::= "number" [ "(" ( integer | "*" ) [ "," integer ] ")" ]
     varchar2_expr  ::= "varchar2" "(" integer [ "char" | "byte" ] ")"
     date_expr      ::= "date" [ "format" string_literal ]
+    timestamp_expr ::= "timestamp" [ "(" integer ")" ] [ "format" string_literal ]
     clob_expr      ::= "clob"
     for_ordinality ::= "for" "ordinality"
     for_metadata   ::= "for" "metadata" "(" ( "comment" | "formula" ) ")"

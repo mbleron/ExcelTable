@@ -42,6 +42,7 @@ create or replace package body ExcelTable is
   DUPLICATE_COL_REF      constant varchar2(100) := 'Duplicate column reference ''%s''';
   DUPLICATE_COL_NAME     constant varchar2(100) := 'Duplicate column name ''%s''';
   SHEET_NOT_FOUND        constant varchar2(100) := 'Sheet not found : ''%s''';
+  NO_PASSWORD            constant varchar2(100) := 'The document is encrypted but no password was provided';
 
   FILE_XLSX              constant pls_integer := 0;
   FILE_XLSB              constant pls_integer := 1;
@@ -63,7 +64,14 @@ create or replace package body ExcelTable is
   CT_SHAREDSTRINGS       constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
   --CT_WORKSHEET           constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
   SML_NSMAP              constant varchar2(100) := 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
-  	
+  
+  -- ODF constants
+  MIMETYPE_ODS           constant varchar2(100) := 'application/vnd.oasis.opendocument.spreadsheet';
+  ODF_OFFICE_NSMAP       constant varchar2(100) := 'xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0"';
+  ODF_TABLE_NSMAP        constant varchar2(100) := 'xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0"';
+  ODF_TEXT_NSMAP         constant varchar2(100) := 'xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
+  ODF_OFFICE_TABLE_NSMAP constant varchar2(150) := ODF_OFFICE_NSMAP || ', ' || ODF_TABLE_NSMAP;
+  
   -- DB Constants
   DB_CSID                constant pls_integer := nls_charset_id('CHAR_CS');
   DB_CHARSET             constant varchar2(30) := nls_charset_name(DB_CSID);
@@ -132,7 +140,7 @@ create or replace package body ExcelTable is
   type t_entries is table of t_entry index by varchar2(260);
   type t_archive is record (entries t_entries, content blob);
   type t_workbook is record (path varchar2(260), content xmltype, content_binary blob, rels xmltype);
-  type t_exceldoc is record (file t_archive, content_map xmltype, workbook t_workbook, is_xlsb boolean);
+  type t_exceldoc is record (/*file t_archive,*/ content_map xmltype, workbook t_workbook, is_xlsb boolean);
   
   -- string cache
   type t_string_rec is record (strval varchar2(32767), lobval clob);
@@ -164,6 +172,7 @@ create or replace package body ExcelTable is
   , comments     t_comments
   , done         boolean default false
   , r_num        binary_integer
+  , src_row      pls_integer
   , dom_reader   t_dom_reader
   , xdb_reader   t_xdb_reader
   , extern_key   integer
@@ -175,12 +184,13 @@ create or replace package body ExcelTable is
   
   type t_node_map is table of dbms_xmldom.DOMNode index by varchar2(3);
   
-  token_map         token_map_t;
-  tokenizer         tokenizer_t;
-  ctx_cache         t_ctx_cache;
-  nls_date_format   varchar2(64);
-  nls_numeric_char  varchar2(2);
-  fetch_size        binary_integer := 100;
+  token_map             token_map_t;
+  tokenizer             tokenizer_t;
+  ctx_cache             t_ctx_cache;
+  nls_date_format       varchar2(64);
+  nls_timestamp_format  varchar2(64);
+  nls_numeric_char      varchar2(2);
+  fetch_size            binary_integer := 100;
 
 
   /* =============================================================================================
@@ -417,43 +427,76 @@ create or replace package body ExcelTable is
 
   end;
 
+  function Zip_hasEntry (
+    archive   in t_archive
+  , entryName in varchar2 
+  )
+  return boolean
+  is
+  begin
+    return archive.entries.exists(entryName);
+  end;
+
   -- ----------------------------------------------------------------------------------------------
   -- Get a zip entry by its name
-  -- 
+  -- MB 20180424 - added STORED method
   function Zip_getEntry (
-    p_archive   in out nocopy t_archive
+    p_archive   in t_archive
   , p_entryname in varchar2
   )
   return blob
   is
-    tmp        blob := hextoraw('1F8B08000000000000FF'); -- gzip magic header + flags
-    content    blob;
-    fnl        binary_integer; -- File name length
-    efl        binary_integer; -- Extra field length
-    lfh        binary_integer; -- Local file header
-    entry      t_entry;
+    tmp      blob; 
+    content  blob;
+    cm       binary_integer; -- Compression method
+    fnl      binary_integer; -- File name length
+    efl      binary_integer; -- Extra field length
+    lfh      binary_integer; -- Local file header
+    entry    t_entry;
   begin
-    if p_archive.entries.exists(p_entryname) then     
+    
+    if p_archive.entries.exists(p_entryname) then
+       
       entry := p_archive.entries(p_entryname);
       lfh := entry.offset;
+      cm := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+8), utl_raw.little_endian);
       fnl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+26), utl_raw.little_endian);
       efl := utl_raw.cast_to_binary_integer(dbms_lob.substr(p_archive.content, 2, lfh+28), utl_raw.little_endian);
       
-      dbms_lob.copy(tmp, p_archive.content, entry.csize, 11, lfh + 30 + fnl + efl);
-      dbms_lob.append(tmp, entry.crc32); -- CRC32
-      dbms_lob.append(tmp, utl_raw.cast_from_binary_integer(entry.ucsize, utl_raw.little_endian)); -- uncompressed size
+      case cm
+      when 8 then -- DEFLATE
+        
+        dbms_lob.createtemporary(tmp, true);
+        -- gzip magic header + flags
+        dbms_lob.writeappend(tmp, 10, hextoraw('1F8B08000000000000FF'));
+        dbms_lob.copy(tmp, p_archive.content, entry.csize, 11, lfh + 30 + fnl + efl);
+        dbms_lob.append(tmp, entry.crc32); -- CRC32
+        dbms_lob.append(tmp, utl_raw.cast_from_binary_integer(entry.ucsize, utl_raw.little_endian)); -- uncompressed size
+        
+        dbms_lob.createtemporary(content, true);
+        utl_compress.lz_uncompress(tmp, content);
+        dbms_lob.freetemporary(tmp);
+        
+      when 0 then -- STORED
+        
+        dbms_lob.createtemporary(content, true);
+        dbms_lob.copy(content, p_archive.content, entry.csize, 1, lfh + 30 + fnl + efl);
       
-      dbms_lob.createtemporary(content, true, dbms_lob.session);
-      utl_compress.lz_uncompress(tmp, content);
+      else
+        raise_application_error(-20724, utl_lms.format_message('Zip_getEntry: unsupported compression method (%d)', cm));
+      end case;
+      
     end if;
+    
     return content;
+    
   end;
   
   -- ----------------------------------------------------------------------------------------------
   -- Get a zip entry as XMLType
   --  assuming the part has been encoded in UTF-8, as Excel does natively
   function Zip_getXML (
-    p_archive   in out nocopy t_archive
+    p_archive   in t_archive
   , p_partname  in varchar2
   )
   return xmltype
@@ -518,6 +561,7 @@ create or replace package body ExcelTable is
   begin
     nls_date_format := get_nls_param('NLS_DATE_FORMAT');
     nls_numeric_char := get_nls_param('NLS_NUMERIC_CHARACTERS');
+    nls_timestamp_format := get_nls_param('NLS_TIMESTAMP_FORMAT');
   end;
 
 
@@ -528,6 +572,12 @@ create or replace package body ExcelTable is
     return nls_date_format;  
   end;
 
+  function get_timestamp_format 
+  return varchar2 
+  is
+  begin
+    return nls_timestamp_format;  
+  end;
  
   function get_decimal_sep 
   return varchar2 
@@ -623,6 +673,42 @@ create or replace package body ExcelTable is
   end;
 
 
+  function get_tstamp_val (
+    p_value  in number 
+  )
+  return timestamp
+  is
+    l_ts  timestamp;
+  begin
+    -- Excel bug workaround : date 1900-02-29 doesn't exist yet Excel stores it at serial #60
+    -- The following skips it and converts to Oracle date correctly
+    if p_value > 60 then
+      l_ts := timestamp '1899-12-30 00:00:00' + numtodsinterval(p_value, 'DAY');
+    elsif p_value < 60 then
+      l_ts := timestamp '1899-12-31 00:00:00' + numtodsinterval(p_value, 'DAY');
+    end if;
+    return l_ts;
+  end;
+
+
+  function get_tstamp_val (
+    p_value   in varchar2
+  , p_format  in varchar2
+  , p_type    in varchar2  
+  )
+  return timestamp
+  is
+    l_ts  timestamp;
+  begin
+    if p_type in ('s','inlineStr','str') then
+      l_ts := to_timestamp(p_value, nvl(p_format, get_timestamp_format));
+    else
+      l_ts := get_tstamp_val(to_number(replace(p_value,'.',get_decimal_sep)));
+    end if;
+    return l_ts;
+  end;
+
+
   function get_comment (ctx_id in binary_integer, col_ref in varchar2)
   return varchar2
   is
@@ -690,6 +776,92 @@ create or replace package body ExcelTable is
       readclob(dbms_xmldom.item(p_nlist, i), p_content);
     end loop;
     dbms_xmldom.freeNodeList(p_nlist);
+  end;
+
+
+  function string_join (
+    nlist  in dbms_xmldom.DOMNodeList
+  , sep    in varchar2 default chr(10)
+  )
+  return t_string_rec
+  is
+  
+    sep_len  constant pls_integer := length(sep);
+    len      pls_integer;
+    str      t_string_rec;
+    tmp      varchar2(32767);
+    node     dbms_xmldom.DOMNode;
+    is_lob   boolean := false;
+    
+  begin
+    
+    for i in 0 .. dbms_xmldom.getLength(nlist) - 1 loop
+      
+      node := dbms_xmldom.item(nlist, i);
+      
+      begin
+        
+        dbms_xslprocessor.valueOf(node, '.', tmp);
+        --tmp := dbms_xslprocessor.valueOf(node, '.');
+          
+        if is_lob then
+          
+          if i > 0 then
+            dbms_lob.writeappend(str.lobval, sep_len, sep);
+          end if;
+          dbms_lob.writeappend(str.lobval, length(tmp), tmp);
+          
+        else
+          
+          len := lengthb(str.strval) + lengthb(tmp);
+          if i > 0 then
+            len := len + sep_len;
+          end if;
+            
+          if len > 32767 then
+            -- switch to CLOB storage 
+            is_lob := true;
+            dbms_lob.createtemporary(str.lobval, true);
+            str.lobval := str.strval;
+            -- line feed?
+            if i > 0 then
+              dbms_lob.writeappend(str.lobval, sep_len, sep);
+            end if;
+            dbms_lob.writeappend(str.lobval, length(tmp), tmp);
+          else
+            
+            if i > 0 then
+              str.strval := str.strval || sep;
+            end if;
+            str.strval := str.strval || tmp;
+            
+          end if;
+            
+        end if;    
+            
+      exception
+        when value_error then
+          
+          if not is_lob then
+            -- switch to CLOB storage 
+            is_lob := true;
+            dbms_lob.createtemporary(str.lobval, true);
+            str.lobval := str.strval;
+          end if;
+          -- line feed?
+          if i > 0 then
+            dbms_lob.writeappend(str.lobval, sep_len, sep);
+          end if;
+          readclob(dbms_xslprocessor.selectNodes(node, './/text()'), str.lobval);
+          
+      end;
+      
+      dbms_xmldom.freeNode(node);
+      
+    end loop;
+    
+    return str;
+    
   end;
 
   
@@ -1156,6 +1328,24 @@ create or replace package body ExcelTable is
           col.format := strval;
         end if;
         
+      elsif accept(T_NAME, 'TIMESTAMP') then
+        col.metadata.typecode := dbms_types.TYPECODE_TIMESTAMP;
+        col.metadata.prec := null;
+        if accept(T_LEFT) then
+          intval := token.intval;
+          expect(T_INT);
+          col.metadata.scale := intval;
+          expect(T_RIGHT);
+        else
+          -- default fractional seconds precision
+          col.metadata.scale := 6;
+        end if;        
+        if accept(T_NAME, 'FORMAT') then
+          strval := token.strval;
+          expect(T_STRING);
+          col.format := strval;
+        end if;        
+        
       elsif accept(T_NAME, 'CLOB') then
         col.metadata.typecode := dbms_types.TYPECODE_CLOB;
         col.metadata.csid := DB_CSID;
@@ -1330,6 +1520,8 @@ from $$TAB t
     query := replace(query, '$$XQ', xq_expr);
     query := replace(query, '$$0', MAX_STRING_SIZE);
     
+    --dbms_output.put_line(query);
+    
     reader.c := dbms_sql.open_cursor;
     dbms_sql.parse(reader.c, query, dbms_sql.native);
     dbms_sql.define_column(reader.c, 1, info.cellRef, 10);
@@ -1403,11 +1595,13 @@ from $$TAB t
   end;
 
 
-  function OX_getWorkbookPath (p_doc in out nocopy t_exceldoc)
+  function OX_getWorkbookPath (
+    archive  in t_archive
+  )
   return varchar2
   is  
     l_path   varchar2(260);
-    l_rels   xmltype := Zip_getXML(p_doc.file, '_rels/.rels');
+    l_rels   xmltype := Zip_getXML(archive, '_rels/.rels');
   begin
    
     select x.partname
@@ -1536,7 +1730,8 @@ from $$TAB t
 
 
   procedure OX_loadStringCache (
-    p_doc    in out nocopy t_exceldoc
+    archive  in t_archive
+  , p_doc    in out nocopy t_exceldoc
   , p_ctx_id in binary_integer
   ) 
   is
@@ -1556,7 +1751,7 @@ from $$TAB t
     
     if l_path is not null then
       
-      l_xml := Zip_getXML(p_doc.file, l_path);
+      l_xml := Zip_getXML(archive, l_path);
       l_query := replace(l_query, '$$0', MAX_STRING_SIZE);
       l_query := replace(l_query, '$$1', VC2_MAXSIZE);
       
@@ -1594,7 +1789,8 @@ from $$TAB t
 
 
   procedure OX_readComments (
-    doc        in out nocopy t_exceldoc
+    archive    in t_archive
+  , doc        in out nocopy t_exceldoc
   , sheet_path in varchar2
   , ctx_id     in binary_integer  
   )
@@ -1611,7 +1807,7 @@ from $$TAB t
   begin
     
     l_sheet_rels_path := regexp_replace(sheet_path, '(.*)/(.*)$', '\1/_rels/\2.rels');
-    l_sheet_rels := Zip_getXML(doc.file, l_sheet_rels_path);
+    l_sheet_rels := Zip_getXML(archive, l_sheet_rels_path);
 
     -- get path of the comments part
     begin
@@ -1636,7 +1832,7 @@ from $$TAB t
       
       if doc.is_xlsb then
       
-        l_comment_part_binary := Zip_getEntry(doc.file, l_comments_path);
+        l_comment_part_binary := Zip_getEntry(archive, l_comments_path);
         l_comment_list := xutl_xlsb.get_comments(l_comment_part_binary);
         for i in 1 .. l_comment_list.count loop
           l_comments(l_comment_list(i).cellCol || to_char(l_comment_list(i).cellRow)) := l_comment_list(i).cellData.accessVarchar2();
@@ -1644,7 +1840,7 @@ from $$TAB t
       
       else
         
-        l_comments_part := Zip_getXML(doc.file, l_comments_path);
+        l_comments_part := Zip_getXML(archive, l_comments_path);
       
         for r in (
           select x.cell_ref, x.cell_cmt
@@ -1670,29 +1866,30 @@ from $$TAB t
 
 
   procedure OX_openWorkbook (
-    p_doc   in out nocopy t_exceldoc
-  , p_file  in blob
+    archive in t_archive
+  , p_doc   in out nocopy t_exceldoc
+  --, p_file  in blob
   ) 
   is
   begin
-    p_doc.file := Zip_openArchive(p_file);
-    p_doc.content_map := Zip_getXML(p_doc.file, '[Content_Types].xml');
+    --p_doc.file := Zip_openArchive(p_file);
+    p_doc.content_map := Zip_getXML(archive, '[Content_Types].xml');
     -- Excel Binary File (.xlsb)?
     p_doc.is_xlsb := OX_hasContentType(p_doc, CT_XL_BINARY_FILE);
-    p_doc.workbook.path := OX_getWorkbookPath(p_doc);
+    p_doc.workbook.path := OX_getWorkbookPath(archive);
     
     if p_doc.is_xlsb then
-      p_doc.workbook.content_binary := Zip_getEntry(p_doc.file, p_doc.workbook.path);
+      p_doc.workbook.content_binary := Zip_getEntry(archive, p_doc.workbook.path);
     else
-      p_doc.workbook.content := Zip_getXML(p_doc.file, p_doc.workbook.path);
+      p_doc.workbook.content := Zip_getXML(archive, p_doc.workbook.path);
     end if;
     
-    p_doc.workbook.rels := Zip_getXML(p_doc.file, regexp_replace(p_doc.workbook.path, '(.*)/(.*)$', '\1/_rels/\2.rels'));
+    p_doc.workbook.rels := Zip_getXML(archive, regexp_replace(p_doc.workbook.path, '(.*)/(.*)$', '\1/_rels/\2.rels'));
   end;
 
 
   procedure OX_openWorksheet (
-    p_file    in  blob
+    archive   in  t_archive
   , p_sheet   in  varchar2
   , p_ctx_id  in  binary_integer
   )
@@ -1715,17 +1912,17 @@ from $$TAB t
     
   begin
     
-    OX_openWorkbook(l_xldoc, p_file);
+    OX_openWorkbook(archive, l_xldoc);
     l_sheetPath := OX_getPathBySheetName(l_xldoc, p_sheet);
     
     if l_tab_def.hasComment then
-      OX_readComments(l_xldoc, l_sheetPath, p_ctx_id);
+      OX_readComments(archive, l_xldoc, l_sheetPath, p_ctx_id);
     end if;
     
     if l_xldoc.is_xlsb then
       
-      l_ws_content := Zip_getEntry(l_xldoc.file, l_sheetPath);
-      l_sst := Zip_getEntry(l_xldoc.file, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS_BIN));
+      l_ws_content := Zip_getEntry(archive, l_sheetPath);
+      l_sst := Zip_getEntry(archive, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS_BIN));
       
       l_key := xutl_xlsb.new_context(
         l_ws_content
@@ -1746,8 +1943,8 @@ from $$TAB t
       case l_read_method 
       when DOM_READ then
       
-        OX_loadStringCache (l_xldoc, p_ctx_id);     
-        l_sheet := Zip_getXML(l_xldoc.file, l_sheetPath);   
+        OX_loadStringCache (archive, l_xldoc, p_ctx_id);     
+        l_sheet := Zip_getXML(archive, l_sheetPath);   
         l_doc := dbms_xmldom.newDOMDocument(l_sheet);
 
         if l_start_row is not null then
@@ -1769,8 +1966,8 @@ from $$TAB t
         
       when STREAM_READ then
 
-        l_ws_content := Zip_getEntry(l_xldoc.file, l_sheetPath);
-        l_sst := Zip_getEntry(l_xldoc.file, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS));
+        l_ws_content := Zip_getEntry(archive, l_sheetPath);
+        l_sst := Zip_getEntry(archive, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS));
         l_key := newContext(
                    l_ws_content
                  , l_sst
@@ -1786,8 +1983,8 @@ from $$TAB t
       
       when STREAM_READ_XDB then
         
-        OX_loadStringCache (l_xldoc, p_ctx_id);     
-        l_sheet := Zip_getXML(l_xldoc.file, l_sheetPath);
+        OX_loadStringCache (archive, l_xldoc, p_ctx_id);     
+        l_sheet := Zip_getXML(archive, l_sheetPath);
         XDB_createReader(ctx_cache(p_ctx_id).xdb_reader, l_sheet, l_start_row, l_end_row);
         
       else
@@ -1842,8 +2039,82 @@ from $$TAB t
     
   end;
 
+  function ODS_getEncryptData (
+    manifest   in xmltype
+  , entryName  in varchar2
+  )
+  return xmltype
+  is
+    output xmltype;
+  begin
 
-  procedure openWorksheet (
+    select column_value
+    into output
+    from xmltable(
+      xmlnamespaces(
+        'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0' as "m"
+      , default 'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0'
+      )
+    , '/manifest/file-entry[@m:full-path=$entryName]/encryption-data'
+      passing manifest
+            , entryName as "entryName"
+    );
+    
+    return output;
+    
+  exception
+    when no_data_found then
+      return null;
+  end;
+
+  procedure ODS_openContent (
+    archive    in t_archive
+  , sheetName  in varchar2
+  , ctx_id     in binary_integer
+  , password   in varchar2
+  )
+  is
+  
+    CONTENT_PART  constant varchar2(256) := 'content.xml';
+    l_doc         dbms_xmldom.DOMDocument;
+    l_rlist       dbms_xmldom.DOMNodeList;
+    l_content     xmltype;
+    l_xpath       varchar2(2000) := '/o:document-content/o:body/o:spreadsheet/t:table[@t:name="$sheetName"]/t:table-row';
+    l_manifest    xmltype;
+    l_enc_data    xmltype;
+      
+  begin
+    
+    ctx_cache(ctx_id).file_type := FILE_ODS;
+    l_manifest := Zip_getXML(archive, 'META-INF/manifest.xml');
+    l_enc_data := ODS_getEncryptData(l_manifest, CONTENT_PART);
+    
+    -- is the content encrypted?
+    if l_enc_data is null then
+      l_content := Zip_getXML(archive, CONTENT_PART);
+    else
+      if password is null then
+        raise_application_error(-20730, NO_PASSWORD);
+      end if;
+      l_content := blob2xml(xutl_offcrypto.get_part_ODF(Zip_getEntry(archive, CONTENT_PART), l_enc_data, password));
+    end if;
+    
+    l_doc := dbms_xmldom.newDOMDocument(l_content);
+    l_xpath := replace(l_xpath, '$sheetName', dbms_xmlgen.convert(sheetName, dbms_xmlgen.ENTITY_ENCODE));
+    l_rlist := dbms_xslprocessor.selectNodes(dbms_xmldom.makeNode(l_doc), l_xpath, ODF_OFFICE_TABLE_NSMAP);
+
+    if dbms_xmldom.isNull(l_rlist) then
+      ctx_cache(ctx_id).done := true;
+    end if;
+        
+    ctx_cache(ctx_id).dom_reader.doc := l_doc;
+    ctx_cache(ctx_id).dom_reader.rlist := l_rlist;
+    ctx_cache(ctx_id).dom_reader.rlist_idx := 0;   
+  
+  end;
+
+
+  procedure openSpreadsheet (
     p_file      in blob
   , p_password  in varchar2
   , p_sheet     in varchar2
@@ -1851,16 +2122,30 @@ from $$TAB t
   )
   is
   
-    cdf  xutl_cdf.cdf_handle;
-    opc  blob;
+    cdf       xutl_cdf.cdf_handle;
+    opc       blob;
+    archive   t_archive;
+    mimetype  varchar2(100);
   
   begin
     
     if is_opc_package(p_file) then
-    
       
-      OX_openWorksheet(p_file, p_sheet, p_ctx_id);
-      
+      archive := Zip_openArchive(p_file);
+      if Zip_hasEntry(archive, 'mimetype') then
+        mimetype := utl_raw.cast_to_varchar2(dbms_lob.substr(Zip_getEntry(archive, 'mimetype')));
+        if mimetype = MIMETYPE_ODS then
+          -- open ODS
+          ODS_openContent(archive, p_sheet, p_ctx_id, p_password);
+        else
+          -- unsupported document format
+          null;
+        end if;
+      else
+        -- process as an Open Office XML document
+        OX_openWorksheet(archive, p_sheet, p_ctx_id);
+      end if;
+        
     elsif xutl_cdf.is_cdf(p_file) then
       
       cdf := xutl_cdf.open_file(p_file);
@@ -1869,10 +2154,11 @@ from $$TAB t
         xutl_cdf.close_file(cdf);
       elsif xutl_cdf.stream_exists(cdf, '/EncryptedPackage') then
         if p_password is null then
-          raise_application_error(-20730, 'The workbook is encrypted but no password was provided');
+          raise_application_error(-20730, NO_PASSWORD);
         end if;
         opc := xutl_offcrypto.get_package(cdf, p_password);
-        OX_openWorksheet(opc, p_sheet, p_ctx_id);
+        archive := Zip_openArchive(opc);
+        OX_openWorksheet(archive, p_sheet, p_ctx_id);
       else
         xutl_cdf.close_file(cdf);
         raise_application_error(-20720, 'Input file does not appear to be a valid MS Excel document');
@@ -1886,7 +2172,7 @@ from $$TAB t
   function getCells_DOM (
     row_node  in dbms_xmldom.DOMNode
   , refSet    in QI_column_ref_set_t
-  , cols      in out nocopy QI_column_list_t
+  , cols      in QI_column_list_t
   , r_num     in out nocopy binary_integer
   , ctx_id    in binary_integer
   ) 
@@ -1910,6 +2196,7 @@ from $$TAB t
       l_varchar2  varchar2(32767);
       l_number    number;
       l_date      date;
+      l_ts        timestamp;
       l_clob      clob;
       l_val       varchar2(32767);
       l_type      varchar2(10);
@@ -2002,6 +2289,12 @@ from $$TAB t
                   
         l_date := get_date_val(l_varchar2, cols(idx).format, l_type);
         cell.cellData := anydata.ConvertDate(l_date);
+        
+      when dbms_types.TYPECODE_TIMESTAMP then
+        
+        l_ts := get_tstamp_val(l_varchar2, cols(idx).format, l_type);
+        dbms_output.put_line(l_ts);
+        cell.cellData := anydata.ConvertTimestamp(l_ts);
                   
       when dbms_types.TYPECODE_CLOB then
         if l_type = 's' then
@@ -2051,10 +2344,10 @@ from $$TAB t
   
   end;
 
-/*
-  function getCells_XDB (
-    cur       in integer
-  , refSet    in out nocopy QI_column_ref_set_t
+
+  function getCells_ODS (
+    row_node  in dbms_xmldom.DOMNode
+  , refSet    in QI_column_ref_set_t
   , cols      in out nocopy QI_column_list_t
   , r_num     in out nocopy binary_integer
   , ctx_id    in binary_integer
@@ -2062,76 +2355,105 @@ from $$TAB t
   return ExcelTableCellList
   is
 
-    cell_map    t_node_map;
-    cell_nodes  dbms_xmldom.DOMNodeList;
-    cell_node   dbms_xmldom.DOMNode;
-    col_ref     varchar2(3);
-    cells       ExcelTableCellList := ExcelTableCellList();
-    res         integer;
+    cell_meta    binary_integer;
+    cell_map     t_node_map;
+    node_cnt     pls_integer;
+    node_idx     pls_integer;
+    cell_nodes   dbms_xmldom.DOMNodeList;
+    cell_node    dbms_xmldom.DOMNode;
+    cell_info    t_cell_info;
+    cell_repeat  pls_integer;
+    cell_idx     pls_integer;
+    cell         ExcelTableCell;
+    cells        ExcelTableCellList := ExcelTableCellList();
+    l_refset     QI_column_ref_set_t := refSet;
+    
+    
+    procedure read_comment (
+      cell_node  in dbms_xmldom.DOMNode
+    , cell_ref   in varchar2
+    )
+    is
+      nodeList  dbms_xmldom.DOMNodeList;
+    begin
+      nodeList := dbms_xslprocessor.selectNodes(cell_node, 'o:annotation/x:p', ODF_OFFICE_NSMAP || ', ' || ODF_TEXT_NSMAP);
+      if not dbms_xmldom.isNull(nodeList) then
+        ctx_cache(ctx_id).comments(cell_ref) := string_join(nodeList).strval;
+      end if;
+    end;
 
     function getNextCell (idx in pls_integer)
     return ExcelTableCell
     is
-      cell        ExcelTableCell := ExcelTableCell(null,null,null,null);
-      col_ref     varchar2(3);
-      
-      l_varchar2  varchar2(32767);
+      --cell_meta   binary_integer;
+      l_str       t_string_rec;
       l_number    number;
       l_date      date;
-      l_clob      clob;
-      l_val       varchar2(32767);
+      l_ts        timestamp(9);
       l_type      varchar2(10);
       l_prec      pls_integer;
       l_scale     pls_integer;
              
     begin
-
-      col_ref := cols(idx).metadata.col_ref;
       
-      if cell_map.exists(col_ref) then
+      cell.cellCol := cols(idx).metadata.col_ref;
+      cell_meta := cols(idx).cell_meta;
+      
+      if cell_meta = META_COMMENT then
+        
+        l_str.strval := get_comment(ctx_id, cell.cellCol || cell.cellRow);
+        
+      elsif cell_map.exists(cell.cellCol) then
                 
-        cell_node := cell_map(col_ref);  
-                
-        -- read cell value element as VARCHAR2 (fallback to CLOB if too long)
-        begin
-          l_val := dbms_xslprocessor.valueOf(cell_node, 'v', SML_NSMAP);
-        exception
-          when value_error then
-            readclob(dbms_xslprocessor.selectSingleNode(cell_node, 'v/text()', SML_NSMAP), l_clob);
-        end;
-                  
-        l_type := dbms_xslprocessor.valueOf(cell_node, '@t');
-
-        if l_type = 's' then
-          l_varchar2 := get_string_val(ctx_id, l_val);
-        elsif l_type = 'inlineStr' then
-          -- read inline string value
-          begin
-            l_varchar2 := dbms_xslprocessor.valueOf(cell_node, 'is', SML_NSMAP);
-          exception
-            when value_error then
-              readclob(dbms_xslprocessor.selectNodes(cell_node, 'is//t/text()', SML_NSMAP), l_clob);
-          end;      
+        cell_node := cell_map(cell.cellCol);
+        
+        -- read cell value type
+        l_type := dbms_xslprocessor.valueOf(cell_node, '@o:value-type', ODF_OFFICE_NSMAP);
+        
+        case l_type
+        when 'float' then
+          l_str.strval := dbms_xslprocessor.valueOf(cell_node, '@o:value', ODF_OFFICE_NSMAP);
+          l_number := to_number(replace(l_str.strval,'.',get_decimal_sep));
+          
+        when 'string' then
+          l_str.strval := dbms_xslprocessor.valueOf(cell_node, '@o:string-value', ODF_OFFICE_NSMAP);
+          if l_str.strval is null then
+            l_str := string_join(dbms_xslprocessor.selectNodes(cell_node, 'x:p', ODF_TEXT_NSMAP));
+          end if;
+        
+        when 'date' then
+          l_str.strval := dbms_xslprocessor.valueOf(cell_node, '@o:date-value', ODF_OFFICE_NSMAP);
+          --l_str.strval := substr(l_str.strval, 1, 19);
+          --l_date := to_date(l_str.strval,'YYYY-MM-DD"T"HH24:MI:SS');
+          l_ts := to_timestamp(l_str.strval,'YYYY-MM-DD"T"HH24:MI:SS.FF9');
+          l_date := cast(l_ts as date);
+          
         else
-          l_varchar2 := l_val;
-        end if;       
-                    
+          null;
+        end case;
+          
+        l_refSet(cell.cellCol) := l_refSet(cell.cellCol) - cell_meta;
+        
+        if bitand(l_refSet(cell.cellCol), META_VALUE + META_FORMULA) = 0 then
+          dbms_xmldom.freeNode(cell_node);
+        end if;
+                
       end if;
                 
       case cols(idx).metadata.typecode
       when dbms_types.TYPECODE_VARCHAR2 then
-        if l_clob is not null then 
-          l_varchar2 := dbms_lob.substr(l_clob, LOB_CHUNK_SIZE);
+        if l_str.lobval is not null then 
+          l_str.strval := dbms_lob.substr(l_str.lobval, LOB_CHUNK_SIZE);
         end if;
-        l_varchar2 := substrb(l_varchar2, 1, cols(idx).metadata.len);
-        cell.cellData := anydata.ConvertVarchar2(l_varchar2);
+        l_str.strval := substrb(l_str.strval, 1, cols(idx).metadata.len);
+        cell.cellData := anydata.ConvertVarchar2(l_str.strval);
                   
       when dbms_types.TYPECODE_NUMBER then
                   
         if cols(idx).for_ordinality then
           l_number := r_num;
-        else
-          l_number := to_number(replace(l_varchar2,'.',get_decimal_sep));
+        elsif l_str.strval is not null then
+          l_number := to_number(replace(l_str.strval,'.',get_decimal_sep));
         end if;
         l_scale := cols(idx).metadata.scale;
         if l_scale is not null then 
@@ -2145,55 +2467,86 @@ from $$TAB t
                   
       when dbms_types.TYPECODE_DATE then
                   
-        l_date := get_date_val(l_varchar2, cols(idx).format, l_type);
+        if l_date is null then
+          l_date := get_date_val(l_str.strval, cols(idx).format, 's');
+        end if;
         cell.cellData := anydata.ConvertDate(l_date);
+        
+      when dbms_types.TYPECODE_TIMESTAMP then
+        
+        if l_ts is null then
+          l_ts := to_timestamp(l_str.strval, nvl(cols(idx).format, get_timestamp_format));
+        end if;
+        cell.cellData := anydata.ConvertTimestamp(l_ts);
                   
       when dbms_types.TYPECODE_CLOB then
-        if l_type = 's' then
-          l_clob := get_clob_val(ctx_id, l_val);
-        elsif l_clob is null then
-          l_clob := to_clob(l_varchar2);
+        if l_str.lobval is null then
+          l_str.lobval := to_clob(l_str.strval);
         end if;
-        cell.cellData := anydata.ConvertClob(l_clob);
+        cell.cellData := anydata.ConvertClob(l_str.lobval);
                 
       end case;          
-                
-      dbms_xmldom.freeNode(cell_node);   
-     
+      
       return cell;
       
     end;
 
   begin
       
-    res := dbms_sql.fetch_rows(cur);
+    --r_num := r_num + 1;
+    cell_info.cellRow := r_num;
+    cell_nodes := dbms_xslprocessor.selectNodes(row_node, 't:table-cell', ODF_TABLE_NSMAP);
+    cell_idx := 1;
+    cell_repeat := 0; 
+    node_cnt := dbms_xmldom.getLength(cell_nodes);
+    node_idx := 0;
     
+    while node_idx < node_cnt loop
     
-    for i in 0 .. dbms_xmldom.getLength(cell_nodes) - 1 loop
-      cell_node := dbms_xmldom.item(cell_nodes, i);
-      col_ref := rtrim(dbms_xslprocessor.valueOf(cell_node, '@r'), DIGITS);
-      if refSet.exists(col_ref) then
-        cell_map(col_ref) := cell_node;
+      cell_info.cellCol := base26encode(cell_idx);
+      
+      if cell_repeat = 0 then
+        
+        cell_node := dbms_xmldom.item(cell_nodes, node_idx);
+        node_idx := node_idx + 1;  
+        cell_repeat := nvl(dbms_xslprocessor.valueOf(cell_node, '@t:number-columns-repeated', ODF_TABLE_NSMAP), 1) - 1;
+        
+      else
+        -- clone the current cell node
+        cell_node := dbms_xmldom.cloneNode(cell_node, true);
+        cell_repeat := cell_repeat - 1;
+      
       end if;
+      
+      if l_refSet.exists(cell_info.cellCol) then
+        cell_meta := l_refSet(cell_info.cellCol);
+        if bitand(cell_meta, META_VALUE + META_FORMULA) != 0 then
+          cell_map(cell_info.cellCol) := cell_node;
+        end if;
+        if bitand(cell_meta, META_COMMENT) != 0 then
+          read_comment(cell_node, cell_info.cellCol || cell_info.cellRow);
+        end if;
+      end if;
+        
+      cell_idx := cell_idx + 1;
+      
     end loop;
     
     dbms_xmldom.freeNodeList(cell_nodes);
     dbms_xmldom.freeNode(row_node);
     
-    if cell_map.count != 0 then
-      r_num := r_num + 1;
-      cells.extend(cols.count); 
-      for i in 1 .. cols.count loop
-        cells(i) := getNextCell(i);
-      end loop;
-    end if;
+    cells.extend(cols.count); 
+    cell := ExcelTableCell(cell_info.cellRow,null,null,null);
+    for i in 1 .. cols.count loop
+      cells(i) := getNextCell(i);
+    end loop;
     
     cell_map.delete;
     
     return cells;
   
   end;
-*/  
+  
 
   procedure setFetchSize (p_nrows in number)
   is
@@ -2291,8 +2644,9 @@ from $$TAB t
     
     ctx_cache(ctx_id).read_method := p_method;
     ctx_cache(ctx_id).r_num := 0;
+    ctx_cache(ctx_id).src_row := 0;
     ctx_cache(ctx_id).def_cache := QI_parseTable(p_range, p_cols);
-    openWorksheet(p_file, p_password, p_sheet, ctx_id);
+    openSpreadsheet(p_file, p_password, p_sheet, ctx_id);
      
     p_ctx_id := ctx_id;
         
@@ -2329,7 +2683,7 @@ from $$TAB t
 
   procedure tableFetch_DOM (
     p_type   in out nocopy anytype
-  , p_ctx_id in out nocopy binary_integer
+  , p_ctx_id in binary_integer
   , nrows    in number
   , rws      out nocopy anydataset
   )
@@ -2362,6 +2716,8 @@ from $$TAB t
               rws.setNumber(cells(i).cellData.AccessNumber);
             when 'SYS.DATE' then
               rws.SetDate(cells(i).cellData.AccessDate);
+            when 'SYS.TIMESTAMP' then
+              rws.SetTimestamp(cells(i).cellData.AccessTimestamp);
             when 'SYS.CLOB' then
               rws.SetClob(cells(i).cellData.AccessClob);
             end case;
@@ -2405,6 +2761,7 @@ from $$TAB t
     l_varchar2  varchar2(32767);
     l_number    number;
     l_date      date;
+    l_ts        timestamp;
     l_clob      clob;
     l_val       anydata;
     l_type      varchar2(10);
@@ -2482,6 +2839,11 @@ from $$TAB t
           
           l_date := get_date_val(l_varchar2, l_cols(i).format, l_type);
           rws.SetDate(l_date);
+          
+        when dbms_types.TYPECODE_TIMESTAMP then
+          
+          l_ts := get_tstamp_val(l_varchar2, l_cols(i).format, l_type);
+          rws.SetTimestamp(l_ts);
             
         when dbms_types.TYPECODE_CLOB then
           
@@ -2554,6 +2916,7 @@ from $$TAB t
     l_varchar2  varchar2(32767);
     l_number    number;
     l_date      date;
+    l_ts        timestamp;
     l_clob      clob;
 
     l_type      varchar2(10);
@@ -2626,6 +2989,11 @@ from $$TAB t
           
           l_date := get_date_val(l_varchar2, l_cols(i).format, l_type);
           rws.SetDate(l_date);
+          
+        when dbms_types.TYPECODE_TIMESTAMP then
+          
+          l_ts := get_tstamp_val(l_varchar2, l_cols(i).format, l_type);
+          rws.SetTimestamp(l_ts);
             
         when dbms_types.TYPECODE_CLOB then
           
@@ -2641,9 +3009,6 @@ from $$TAB t
   begin
     
     if not ctx_cache(ctx_id).done then
-    
-      --dbms_output.put_line('tableFetch_XDB');
-      --dbms_output.put_line('requested rows = '||nrows);
       
       l_cols := ctx_cache(ctx_id).def_cache.cols;
       l_rnum := ctx_cache(ctx_id).r_num;
@@ -2655,16 +3020,12 @@ from $$TAB t
         previousRow := cell.cellRow;        
       end if;
       
-      --dbms_output.put_line('Cursor number = '||cur);
-      
       anydataset.beginCreate(dbms_types.TYPECODE_OBJECT, p_type, rws);
       
       loop
-        --dbms_output.put_line('r_num = '||l_rnum);
       
         res := dbms_sql.fetch_rows(cur);
-        --dbms_output.put_line('Rows fetched = '||res);
-        --exit when res = 0;
+
         if res = 0 then
           -- ensures at least one fetch
           if previousRow is not null then
@@ -2680,8 +3041,6 @@ from $$TAB t
           
         cell.cellRow := ltrim(cell.cellRef, LETTERS);
         cell.cellCol := rtrim(cell.cellRef, DIGITS);
-        
-        --dbms_output.put_line(cell.cellRef);
           
         if cell.cellRow != previousRow then
           setRow;
@@ -2697,9 +3056,6 @@ from $$TAB t
         previousRow := cell.cellRow;
         
       end loop;
-            
-      --ctx_cache(ctx_id).done := true;
-      --dbms_output.put_line('read rows = '||(nrows-l_nrows));
       
       rws.endCreate;
       
@@ -2733,6 +3089,7 @@ from $$TAB t
     l_varchar2  varchar2(32767);
     l_number    number;
     l_date      date;
+    l_ts        timestamp;
     l_clob      clob;
     l_val       anydata;
     l_type      varchar2(10);
@@ -2822,6 +3179,15 @@ from $$TAB t
             l_date := get_date_val(l_varchar2, l_cols(i).format, l_type);
           end if;
           rws.SetDate(l_date);
+          
+        when dbms_types.TYPECODE_TIMESTAMP then
+          
+          if l_number is not null then
+            l_ts := get_tstamp_val(l_number);
+          else
+            l_ts := get_tstamp_val(l_varchar2, l_cols(i).format, l_type);
+          end if;
+          rws.SetTimestamp(l_ts);
             
         when dbms_types.TYPECODE_CLOB then
           
@@ -2875,6 +3241,131 @@ from $$TAB t
   end;
 
 
+  procedure tableFetch_ODS (
+    p_type   in out nocopy anytype
+  , ctx_id in out nocopy binary_integer
+  , nrows    in number
+  , rws      out nocopy anydataset
+  )
+  is
+      
+    l_nrows      integer := nrows;
+    cells        ExcelTableCellList;
+    row_node     dbms_xmldom.DOMNode;
+    row_repeat   pls_integer := 0;
+    row_cnt      pls_integer;
+    row_idx      pls_integer;
+    row_num      pls_integer;
+    src_row      pls_integer;
+    
+    l_start_row  pls_integer := ctx_cache(ctx_id).def_cache.range.start_ref.r;
+    l_end_row    pls_integer := ctx_cache(ctx_id).def_cache.range.end_ref.r;
+
+  begin
+
+    if not ctx_cache(ctx_id).done then
+
+      anydataset.beginCreate(dbms_types.TYPECODE_OBJECT, p_type, rws);
+      row_cnt := dbms_xmldom.getLength(ctx_cache(ctx_id).dom_reader.rlist);
+      row_idx := ctx_cache(ctx_id).dom_reader.rlist_idx;
+      row_num := ctx_cache(ctx_id).r_num;
+      src_row := ctx_cache(ctx_id).src_row;
+      
+      loop
+          
+        src_row := src_row + 1;
+        
+        if row_repeat = 0 then  
+      
+          row_node := dbms_xmldom.item(ctx_cache(ctx_id).dom_reader.rlist, row_idx);
+          row_idx := row_idx + 1;
+          row_repeat := nvl(dbms_xslprocessor.valueOf(row_node, '@t:number-rows-repeated', ODF_TABLE_NSMAP), 1) - 1;
+          
+          -- read cell nodes if within the requested range
+          if l_start_row <= src_row + row_repeat then
+
+            if l_start_row <= src_row then
+              row_num := row_num + 1;
+            end if;
+
+            cells := getCells_ODS( 
+                       row_node
+                     , ctx_cache(ctx_id).def_cache.refSet
+                     , ctx_cache(ctx_id).def_cache.cols
+                     --, ctx_cache(ctx_id).r_num
+                     , row_num
+                     , ctx_id
+                     );
+                   
+          end if;
+          
+        else
+          
+          if l_start_row <= src_row then
+          
+            -- update cellRow attribute and FOR ORDINALITY value (if necessary)
+            row_num := row_num + 1;
+            
+            for i in 1 .. cells.count loop
+              cells(i).cellRow := row_num;
+              if ctx_cache(ctx_id).def_cache.cols(i).for_ordinality then
+                cells(i).cellData := anydata.ConvertNumber(row_num);
+              end if;
+            end loop;
+          
+          end if;
+          
+          --ctx_cache(ctx_id).r_num := row_num;
+          row_repeat := row_repeat - 1;
+        
+        end if;    
+        
+        -- no more row to read?
+        if row_idx = row_cnt or src_row = l_end_row then 
+          ctx_cache(ctx_id).done := true;
+        end if;
+        
+        if cells is not empty and l_start_row <= src_row then
+          
+          rws.addInstance;
+          rws.piecewise;
+        
+          for i in 1 .. cells.count loop
+                  
+            case cells(i).cellData.GetTypeName()
+            when 'SYS.VARCHAR2' then
+              rws.setVarchar2(cells(i).cellData.AccessVarchar2);
+            when 'SYS.NUMBER' then
+              rws.setNumber(cells(i).cellData.AccessNumber);
+            when 'SYS.DATE' then
+              rws.SetDate(cells(i).cellData.AccessDate);
+            when 'SYS.TIMESTAMP' then
+              rws.SetTimestamp(cells(i).cellData.AccessTimestamp);
+            when 'SYS.CLOB' then
+              rws.SetClob(cells(i).cellData.AccessClob);
+            end case;
+            
+          end loop;
+          
+          l_nrows := l_nrows - 1;
+        
+        end if;
+              
+        exit when ctx_cache(ctx_id).done or l_nrows = 0;
+
+      end loop;
+      
+      ctx_cache(ctx_id).dom_reader.rlist_idx := row_idx;
+      ctx_cache(ctx_id).r_num := row_num;
+      ctx_cache(ctx_id).src_row := src_row;
+
+      rws.endCreate;
+       
+    end if;
+     
+  end;
+
+
   procedure tableFetch (
     p_type   in out nocopy anytype
   , p_ctx_id in out nocopy binary_integer
@@ -2901,6 +3392,8 @@ from $$TAB t
       tableFetch_Binary(p_type, p_ctx_id, l_nrows, FILE_XLS, rws);
     when FILE_XLSB then
       tableFetch_Binary(p_type, p_ctx_id, l_nrows, FILE_XLSB, rws);
+    when FILE_ODS then
+      tableFetch_ODS(p_type, p_ctx_id, l_nrows, rws);
     
     end case;
     
@@ -2943,7 +3436,12 @@ from $$TAB t
       
       xutl_xlsb.free_context(ctx_cache(p_ctx_id).extern_key);
       --dbms_lob.freetemporary(ctx_cache(p_ctx_id).ws_content);
+    
+    when FILE_ODS then
       
+      dbms_xmldom.freeNodeList(ctx_cache(p_ctx_id).dom_reader.rlist);
+      dbms_xmldom.freeDocument(ctx_cache(p_ctx_id).dom_reader.doc);
+    
     end case;
     
     ctx_cache.delete(p_ctx_id);
@@ -3090,7 +3588,7 @@ from $$TAB t
     
   end;
   
-  
+/*  
   procedure insertData (
     p_ctx_id    in DMLContext 
   , p_file      in blob
@@ -3168,7 +3666,7 @@ from $$TAB t
       
       if cells is not empty then
         
-        /*
+        \*
         for i in 1 .. cells.count loop   
           case cells(i).cellData.GetTypeName()
           when 'SYS.VARCHAR2' then
@@ -3181,7 +3679,7 @@ from $$TAB t
             dbms_sql.bind_variable(c, to_char(i), cells(i).cellData.AccessClob);
           end case;          
         end loop;
-        */
+        *\
         
         j := j + 1;
 
@@ -3236,7 +3734,7 @@ from $$TAB t
     dbms_sql.close_cursor(c);
     
   end;
-  
+ */
 
   begin
    
