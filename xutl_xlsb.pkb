@@ -370,7 +370,6 @@ create or replace package body xutl_xlsb is
     output  varchar2(3);
     num     pls_integer := colNum + 1;
   begin
-    debug('base26encode');
     if colNum is not null then
       while num != 0 loop
         output := chr(65 + mod(num-1,26)) || output;
@@ -437,7 +436,7 @@ create or replace package body xutl_xlsb is
   return String_T
   is
     fErr  raw(1);
-    str    String_T;
+    str   String_T;
   begin
     fErr := read_bytes(stream, 1);
     str.strValue := 
@@ -636,7 +635,7 @@ create or replace package body xutl_xlsb is
     end;
     
   begin
-    
+  
     if rw is not null then
       rcnt := 1;
     end if;
@@ -652,13 +651,21 @@ create or replace package body xutl_xlsb is
       elsif ctx.stream.rt = BRT_ROWHDR then
         rw := read_int32(ctx.stream);
         debug('Row '||rw);
-        rcnt := rcnt + 1;
-        if rcnt > nrows then
-          ctx.curr_rw := rw;
-          exit;
-        elsif rw > ctx.rng.lastRow then
+        
+        if rw > ctx.rng.lastRow then
+          debug('End of range');
           ctx.done := true;
           exit;
+        
+        elsif rw >= ctx.rng.firstRow then
+          
+          rcnt := rcnt + 1;
+          if rcnt > nrows then
+            debug('Batch size = '||to_char(rcnt-1));
+            ctx.curr_rw := rw;
+            exit;
+          end if;
+          
         end if;
         
       elsif rw >= ctx.rng.firstRow then

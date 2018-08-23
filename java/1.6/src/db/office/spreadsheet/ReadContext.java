@@ -48,7 +48,6 @@ public class ReadContext {
 			throws SQLException, CellReaderException {
 		
 		OracleConnection conn = (OracleConnection) DriverManager.getConnection("jdbc:default:connection:");
-		
 		ReadContext ctx;
 		try {
 			ctx = (ReadContext) ContextManager.getContext(key);

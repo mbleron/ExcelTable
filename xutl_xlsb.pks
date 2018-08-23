@@ -26,6 +26,8 @@ create or replace package xutl_xlsb is
 =========================================================================================
     Change history :
     Marc Bleron       2018-04-02     Creation
+    Marc Bleron       2018-08-23     Bug fix : no row returned if fetch_size (p_nrows)
+                                     is less than first row index
 ====================================================================================== */
    
   procedure set_debug (p_mode in boolean);

@@ -1,4 +1,4 @@
-# ExcelTable - An Oracle SQL Interface for MS Excel Files
+ï»¿# ExcelTable - An Oracle SQL Interface for MS Excel and ODF Spreadsheet Files
 
 ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls), or ODF spreadsheet file (.ods) as if it were an external table.  
 It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
@@ -11,6 +11,9 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 > Version 2.2 : 
 > ExcelTable can read ODF (OpenDocument) spreadsheet files (.ods).  
 > Support for TIMESTAMP data type
+
+> Version 2.3 : 
+> New API for DML operations
 
 ## Bug tracker
 
@@ -32,7 +35,7 @@ The owner requires the CREATE TABLE privilege in this case :
 grant create table to <user>;
 ```
 
-In order to read encrypted Excel files, the interface requires access to the DBMS_CRYPTO API (see PL/SQL section below).  
+In order to read encrypted files, the interface requires access to the DBMS_CRYPTO API (see PL/SQL section below).  
 The owner must therefore be granted EXECUTE privilege on it : 
 ```sql
 grant execute on sys.dbms_crypto to <user>;
@@ -121,10 +124,10 @@ A helper function `ExcelTable.getFile` is available to directly reference the fi
 * `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
 * `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
 * `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored if the file is not a .xlsx or .xlsm file.
-* `p_password` : Optional - password used to encrypt the Excel document
+* `p_password` : Optional - password used to encrypt the spreadsheet document
 
 
-## 
+---  
 ```sql
 procedure setFetchSize (p_nrows in number);
 ```
@@ -133,7 +136,7 @@ If the number of rows requested by the client is greater than the fetch size, th
 The default fetch size is 100.  
 
 
-## 
+---  
 ```sql
 function getCursor (
   p_file     in blob
@@ -147,6 +150,115 @@ return sys_refcursor;
 ```
 getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by an equivalent getRows() call.  
 It may be useful in PL/SQL code where static reference to table function returning ANYDATASET is not supported.  
+
+---
+DML API (new in version 2.3)
+```sql
+function createDMLContext (
+  p_table_name in varchar2    
+)
+return DMLContext;
+```
+createDMLContext() initializes a new DML context based on the input table/view name.  
+Argument p_table_name may be a simple or qualified SQL name, with no database link part, for example :   
+`MY_TABLE`  
+`MY_SCHEMA.MY_TABLE`  
+`"myTable"`  
+`MY_SCHEMA."myTable"`  
+
+The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines `mapColumn()` and `loadData()`.
+
+__Example__ : 
+```
+declare
+  ctx    ExcelTable.DMLContext;
+begin
+  ctx := ExcelTable.createDMLContext('MY_TARGET_TABLE');
+  ...
+  
+```
+##
+```sql
+procedure mapColumn (
+  p_ctx       in DMLContext
+, p_col_name  in varchar2
+, p_col_ref   in varchar2
+, p_format    in varchar2     default null
+, p_meta      in pls_integer  default null
+, p_key       in boolean      default false
+);
+```
+mapColumn() associates a column from the target table to a column reference from the spreadsheet file.
+
+* `p_ctx` : a DMLContext value, as returned by a previous call to `createDMLContext` function.
+* `p_col_name` : column name from the target table
+* `p_col_ref` : column reference (A, B, C etc.)
+* `p_format` : Optional - a date or timestamp format mask, same as `p_format` argument from getRows() function
+* `p_meta` : Optional - allowed values are META_ORDINALITY and META_COMMENT, same as `FOR ORDINALITY` and `FOR METADATA (COMMENT)` clauses in the [column list](#columns-syntax-specification)
+* `p_key` : Optional - defaults to false - marks this column as a key of the input data set. At least one column must be marked as key in an UPDATE, MERGE or DELETE context.
+
+
+__Example__ : 
+```
+declare
+  ctx    ExcelTable.DMLContext;
+begin
+  
+  ctx := ExcelTable.createDMLContext('MY_TARGET_TABLE');
+  
+  ExcelTable.mapColumn(ctx, p_col_name => 'ID',   p_col_ref => 'A', p_key => true);
+  ExcelTable.mapColumn(ctx, p_col_name => 'NAME', p_col_ref => 'B');
+  ExcelTable.mapColumn(ctx, p_col_name => 'VAL',  p_col_ref => 'C');
+  ExcelTable.mapColumn(ctx, p_col_name => 'VAL_COMMENT',  p_col_ref => 'C', p_meta => ExcelTable.META_COMMENT);
+  ...
+  
+```
+##
+```sql
+function loadData (
+  p_ctx          in DMLContext
+, p_file         in blob
+, p_sheet        in varchar2
+, p_range        in varchar2       default null
+, p_method       in binary_integer default DOM_READ
+, p_password     in varchar2       default null
+, p_dml_type     in pls_integer    default DML_INSERT
+, p_err_log      in varchar2       default null
+)
+return integer;
+```
+loadData() executes the data loading operation into the target table, using the mode specified in the `p_dml_type` argument.  
+An optional error logging clause is available.
+
+* `p_ctx` : a DMLContext value, as returned by a previous call to `createDMLContext` function.
+* `p_file`, `p_sheet`, `p_range`, `p_method`, `p_password`: same arguments as in `getRows()` function
+* `p_dml_type` : Optional - the DML context type, one of DML_INSERT, DML_UPDATE, DML_MERGE or DML_DELETE. Default is DML_INSERT
+* `p_err_log` : a text-literal [DML error logging](https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423) clause, to capture exceptions during load
+
+The function returns the number of rows affected in the operation.
+
+__Example__ : 
+```
+declare
+  ctx    ExcelTable.DMLContext;
+  nrows  integer;
+begin
+  ...
+  
+  nrows := 
+  ExcelTable.loadData(
+    p_ctx      => ctx
+  , p_file     => ExcelTable.getFile('XL_DATA_DIR','sample0.xlsx')
+  , p_sheet    => 'DataSource'
+  , p_method   => ExcelTable.STREAM_READ
+  , p_dml_type => ExcelTable.DML_MERGE
+  );
+  
+  dbms_output.put_line(nrows || ' rows merged.');
+  
+end;
+  
+```
 
 ## 
 #### Columns syntax specification
@@ -255,15 +367,15 @@ For the OpenDocument standard, please refer to : [OASIS ODF v1.2 (Encryption)](h
 ## 
 ### Examples
 
-Given this sample file : [ooxdata3.xlsx](./samples/ooxdata3.xlsx)
+Given this sample file : [sample_3.xlsx](./samples/sample_3.xlsx)
 
-* Loading all six columns, starting at cell A2, in order to skip the header :
+* Selecting all six columns, starting at cell A2, in order to skip the header :
 
-```
-select t.*
+```sql
+select t.* 
 from table(
        ExcelTable.getRows(
-         ExcelTable.getFile('TMP_DIR','ooxdata3.xlsx')
+         ExcelTable.getFile('XL_DATA_DIR','sample_3.xlsx')
        , 'DataSource'
        , ' "SRNO"    number
          , "NAME"    varchar2(10)
@@ -277,13 +389,13 @@ from table(
 ;
 ```
 
-* Loading columns B and F only, from rows 2 to 10, with a generated sequence :
+* Selecting columns B and F only, from rows 2 to 10, with a generated sequence :
 
-```
+```sql
 select t.*
 from table(
        ExcelTable.getRows(
-         ExcelTable.getFile('TMP_DIR','ooxdata3.xlsx')
+         ExcelTable.getFile('XL_DATA_DIR','sample_3.xlsx')
        , 'DataSource'
        , q'{
            "R_NUM"   for ordinality
@@ -296,21 +408,21 @@ from table(
 ;
 ```
 
-* Loading column C, starting at row 5, from a password-encrypted workbook ([crypto2016.xlsx](./samples/crypto2016.xlsx)) : 
+* Selecting column C, starting at row 5, from a password-encrypted workbook ([crypto2016.xlsx](./samples/crypto2016.xlsx)) : 
 
-```
-SQL> select *
-  2  from table(
-  3         ExcelTable.getRows(
-  4           ExcelTable.getFile('TMP_DIR','crypto2016.xlsx')
-  5         , 'Feuil1'
-  6         , '"COL1" number'
-  7         , 'C5'
-  8         , 0
-  9         , p_password => 'AZE'
- 10         )
- 11       )
- 12  ;
+```sql
+select t.*
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','crypto2016.xlsx')
+       , 'Feuil1'
+       , '"COL1" number'
+       , 'C5'
+       , 0
+       , p_password => 'AZE'
+       )
+     ) t
+;
  
       COL1
 ----------
@@ -320,49 +432,47 @@ SQL> select *
  
 ```  
 
-* Loading first three columns, row 1 to 91, from a password-encrypted .xls workbook ([ooxdata2c.xls](./samples/ooxdata2c.xls)) : 
+* Selecting first three columns, row 1 to 91, from a password-encrypted .xls workbook ([crypto2003.xls](./samples/crypto2003.xls)) : 
 
-```
-SQL> select t.srno
-  2       , t.name
-  3       , t.content
-  4       , length(t.content) as content_length
-  5  from table(
-  6         ExcelTable.getRows(
-  7           ExcelTable.getFile('TMP_DIR','ooxdata2c.xls')
-  8         , 'DataSource'
-  9         , ' "SRNO"    number
- 10           , "NAME"    varchar2(10)
- 11           , "CONTENT" clob'
- 12         , '1:91'
- 13         , p_method   => null
- 14         , p_password => 'pass123'
- 15         )
- 16       ) t
- 17  ;
+```sql
+select t.srno
+     , t.name
+     , t.content
+     , length(t.content) as content_length
+from table(
+       ExcelTable.getRows(
+         p_file  => ExcelTable.getFile('XL_DATA_DIR','crypto2003.xls')
+       , p_sheet => 'DataSource'
+       , p_cols  => ' "SRNO"    number
+                    , "NAME"    varchar2(10)
+                    , "CONTENT" clob'
+       , p_range    =>  '1:91'
+       , p_method   => null
+       , p_password => 'pass123'
+       )
+     ) t
+;
  
-      SRNO NAME       CONTENT                                             CONTENT_LENGTH
----------- ---------- --------------------------------------------------- --------------
-         1 LINE-00001 ABCD                                                             4
-         2 LINE-00002 ABC                                                              3
-         3 LINE-00003 ABC                                                              3
-         4 LINE-00004 ABC                                                              3
-         5 LINE-00005 ABC                                                              3
-         6 LINE-00006 ABC                                                              3
-         7 LINE-00007 ABC                                                              3
-         8 LINE-00008 €XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX           8000
-         9 LINE-00009 €€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€           4000
-        10 LINE-00010 10LINE-00010                                                    12
-        11 LINE-00011 €XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX          12000
-        12 LINE-00012 ABC                                                              3
-        13 LINE-00013 ABC                                                              3
-        14 LINE-00014 ABC                                                              3
+      SRNO NAME       CONTENT                                                                          CONTENT_LENGTH
+---------- ---------- -------------------------------------------------------------------------------- --------------
+         1 LINE-00001 ABCD                                                                                          4
+         2 LINE-00002 ABC                                                                                           3
+         3 LINE-00003 ABC                                                                                           3
+         4 LINE-00004 ABC                                                                                           3
+         5 LINE-00005 ABC                                                                                           3
+         6 LINE-00006 ABC                                                                                           3
+         7 LINE-00007 ABC                                                                                           3
+         8 LINE-00008 â‚¬XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX           8000
+         9 LINE-00009 â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬â‚¬           4000
+        10 LINE-00010 10LINE-00010                                                                                 12
+        11 LINE-00011 â‚¬XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX          12000
+        12 LINE-00012 ABC                                                                                           3
+        13 LINE-00013 ABC                                                                                           3
+        14 LINE-00014 ABC                                                                                           3
+        15 LINE-00015 ABC                                                                                           3
 ...
-        89 LINE-00089 ABC                                                              3
-        90 LINE-00090 ABC                                                              3
-        91 LINE-00091 ABC                                                              3
- 
-89 rows selected.
+        90 LINE-00090 ABC                                                                                           3
+        91 LINE-00091 ABC                                                                                           3
  
 ```  
 
@@ -374,7 +484,7 @@ SQL>
 SQL> begin
   2    :rc :=
   3    ExcelTable.getCursor(
-  4      p_file  => ExcelTable.getFile('TMP_DIR','ooxdata3.xlsx')
+  4      p_file  => ExcelTable.getFile('XL_DATA_DIR','sample_3.xlsx')
   5    , p_sheet => 'DataSource'
   6    , p_cols  => '"SRNO" number, "NAME" varchar2(10), "VAL" number, "DT" date, "SPARE1" varchar2(6), "SPARE2" varchar2(6)'
   7    , p_range => 'A2'
@@ -388,87 +498,67 @@ SQL> print rc
 
       SRNO NAME              VAL DT        SPARE1 SPARE2
 ---------- ---------- ---------- --------- ------ ------
-         1 LINE-00001 66916.2986 13-OCT-23
-         2 LINE-00002 96701.3427 05-SEP-06
-         3 LINE-00003 68778.8698 23-JAN-11        OK
-         4 LINE-00004  95110.028 03-MAY-07        OK
-         5 LINE-00005 62561.5708 04-APR-27
-         6 LINE-00006 28677.1166 11-JUL-23        OK
-         7 LINE-00007 16141.0202 20-NOV-02
-         8 LINE-00008 80362.6256 19-SEP-10
-         9 LINE-00009 10384.1973 16-JUL-02
-        10 LINE-00010  5266.9097 08-AUG-21
-        11 LINE-00011 12513.0679 01-JUL-08
-        12 LINE-00012 66596.9707 22-MAR-13
+         1 LINE-00001 12236.3667 08-OCT-15
+         2 LINE-00002 72259.9805 30-MAY-12
+         3 LINE-00003 19670.5563 22-DEC-18        OK
+         4 LINE-00004 58050.7687 20-JUN-03        OK
+         5 LINE-00005  69408.796 24-JUN-11
+         6 LINE-00006 71611.4463 06-AUG-14        OK
+         7 LINE-00007 88220.2497 22-JAN-09
+         8 LINE-00008 6399.55197 09-MAY-18
+         9 LINE-00009  20486.593 21-NOV-03
+        10 LINE-00010  80027.221 27-FEB-25
+        11 LINE-00011 79219.8838 17-FEB-20
+        12 LINE-00012 91934.5566 25-JUN-16
 ...
-        97 LINE-00097 19857.7661 16-FEB-09
-        98 LINE-00098 19504.3969 05-DEC-17
-        99 LINE-00099 98675.8673 05-JUN-06
-       100 LINE-00100 24288.2885 22-JUL-20
+        97 LINE-00097 75448.2015 13-NOV-10
+        98 LINE-00098  42884.264 28-JAN-24
+        99 LINE-00099 22901.7672 29-FEB-24
+       100 LINE-00100  34917.174 26-JUN-22
 
 100 rows selected.
 
 ```  
 
-* Extracting column F (value and cell comment) : 
+* Selecting column F (value and cell comment) : 
 
-```
-SQL> select t.*
-  2  from table(
-  3         ExcelTable.getRows(
-  4           ExcelTable.getFile('TMP_DIR','ooxdata3.xlsx')
-  5         , 'DataSource'
-  6         , q'{
-  7             "RN"             for ordinality
-  8           , "SPARE2"         varchar2(30)   column 'F'
-  9           , "SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
- 10           }'
- 11         , '2:11'
- 12         )
- 13       ) t
- 14  ;
-
- RN SPARE2 SPARE2_COMMENT
---- ------ ------------------------------
-  1
-  2
-  3 OK     bleronm:
-           This is a comment.
-
-  4 OK
-  5
-  6 OK
-  7
-  8
-  9        This is
-           another comment
-           on three lines
-
- 10
-
-10 rows selected.
+```sql
+select t.*
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','sample_3.xlsx')
+       , 'DataSource'
+       , q'{
+           "RN"             for ordinality
+         , "SPARE2"         varchar2(30)   column 'F'
+         , "SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
+         }'
+       , '2:11'
+       )
+     ) t
+;
 
 ```
 
-* Extracting first three columns from encrypted .ods file [test01c.ods](./samples/test01c.ods) : 
+* Selecting first three columns from encrypted .ods file [LO_AES256.ods](./samples/LO_AES256.ods) : 
 
-```
-SQL> select t.*
-  2  from table(
-  3         ExcelTable.getRows(
-  4           ExcelTable.getFile('TMP_DIR','test01c.ods')
-  5         , 'Feuille1'
-  6         , q'{
-  7             "COL_1"  number
-  8           , "COL_2"  number
-  9           , "COL_3"  timestamp(3)
- 10           }'
- 11         , p_range => 'A1'
- 12         , p_method => null
- 13         , p_password => 'pass123'
- 14         )
- 15       ) t
- 16  ;
+```sql
+select t.*
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','LO_AES256.ods')
+       , 'Feuille1'
+       , q'{
+           "COL_1"  number
+         , "COL_2"  number
+         , "COL_3"  timestamp(3)
+         }'
+       , p_range    => 'A1'
+       , p_method   => null
+       , p_password => 'pass123'
+       )
+     ) t
+;
  
      COL_1      COL_2 COL_3
 ---------- ---------- ---------------------------
@@ -479,11 +569,130 @@ SQL> select t.*
          5       -123 11-JUN-18 03.20.37.120 PM
          6         -1 
  
-6 rows selected.
+```
+
+* Special cell values (boolean and errors) : 
+
+```sql
+select t.*
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','sample_1.xlsb')
+       , 'data'
+       , '"VAL" varchar2(15)'
+       , 'F3:F11'
+       )
+     ) t
+;
+ 
+VAL
+---------------
+FALSE
+TRUE
+#N/A
+#NULL!
+#DIV/0!
+#VALUE!
+#REF!
+#NAME?
+#NUM!
  
 ```
 
+
+* Using the DML API - example 1 : simple INSERT 
+
+```sql
+create table tmp_sample2 (
+  id   number       primary key
+, name varchar2(10)
+, val  varchar2(30)
+);
+```
+```
+declare
+
+  ctx    ExcelTable.DMLContext;
+  nrows  integer;
+  
+begin
+  
+  ctx := ExcelTable.createDMLContext('TMP_SAMPLE2');
+  
+  ExcelTable.mapColumn(ctx, p_col_name => 'ID',   p_col_ref => 'A');
+  ExcelTable.mapColumn(ctx, p_col_name => 'NAME', p_col_ref => 'B');
+  ExcelTable.mapColumn(ctx, p_col_name => 'VAL',  p_col_ref => 'C');
+  
+  nrows := 
+  ExcelTable.loadData(
+    p_ctx      => ctx
+  , p_file     => ExcelTable.getFile('XL_DATA_DIR','sample_2.xlsx')
+  , p_sheet    => 'DataSource'
+  , p_method   => ExcelTable.STREAM_READ
+  , p_dml_type => ExcelTable.DML_INSERT
+  );
+  
+  dbms_output.put_line(nrows || ' rows inserted.');
+  
+end;
+/
+```
+
+* Using the DML API - example 2 : MERGE with DML error logging
+```sql
+create table tmp_sample1 (
+  id          integer      primary key
+, name        varchar2(8)
+, val         number
+, ts          timestamp(3)
+, txt         clob
+, spare1      varchar2(30)
+, spare1_cmt  varchar2(4000)
+);
+```
+```sql
+-- optional, in order to use the DML error logging clause
+-- creates table ERR$_TMP_SAMPLE1 :
+exec dbms_errlog.create_error_log('TMP_SAMPLE1', skip_unsupported => true);
+```
+```
+declare
+
+  ctx    ExcelTable.DMLContext;
+  nrows  integer;
+  
+begin
+  
+  ctx := ExcelTable.createDMLContext('TMP_SAMPLE1');
+  
+  ExcelTable.mapColumn(ctx, p_col_name => 'ID', p_col_ref => 'A', p_key => true);
+  ExcelTable.mapColumn(ctx, p_col_name => 'NAME', p_col_ref => 'B');
+  ExcelTable.mapColumn(ctx, p_col_name => 'VAL', p_col_ref => 'C');
+  ExcelTable.mapColumn(ctx, p_col_name => 'TS', p_col_ref => 'D');
+  ExcelTable.mapColumn(ctx, p_col_name => 'TXT', p_col_ref => 'E');
+  ExcelTable.mapColumn(ctx, p_col_name => 'SPARE1', p_col_ref => 'F');
+  ExcelTable.mapColumn(ctx, p_col_name => 'SPARE1_CMT', p_col_ref => 'F', p_meta => ExcelTable.META_COMMENT);
+    
+  nrows := 
+  ExcelTable.loadData(
+    p_ctx      => ctx
+  , p_file     => ExcelTable.getFile('XL_DATA_DIR','sample_1.xlsb')
+  , p_sheet    => 'data'
+  , p_dml_type => ExcelTable.DML_MERGE
+  , p_err_log  => 'LOG ERRORS (''Some comment'') REJECT LIMIT UNLIMITED'
+  );
+  
+  dbms_output.put_line(nrows || ' rows merged.');
+  
+end;
+/
+```
+
 ## CHANGELOG
+### 2.3 (2018-08-23)
+* New API for DML operations
+* Internal modularization, unified interface for cell sources
+
 ### 2.2 (2018-07-07)
 * Added support for OpenDocument (ODF) spreadsheets (.ods), including encrypted files
 * Added support for TIMESTAMP data type

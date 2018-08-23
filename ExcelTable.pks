@@ -46,6 +46,7 @@ create or replace package ExcelTable is
     Marc Bleron       2018-04-21     Added support for .xlsb files
     Marc Bleron       2018-04-24     Unzip utility : detection of stored files (no comp)
     Marc Bleron       2018-05-12     Added support for ODF spreadsheets (.ods)
+    Marc Bleron       2018-08-22     new API for DML operations
 ====================================================================================== */
 
   -- Read methods  
@@ -53,10 +54,52 @@ create or replace package ExcelTable is
   STREAM_READ            constant pls_integer := 1;
   STREAM_READ_XDB        constant pls_integer := 2;
 
+  -- Metadata constants
+  META_ORDINALITY        constant pls_integer := 0;
+  META_COMMENT           constant pls_integer := 2;
+
+  -- DML operation types
+  DML_INSERT             constant pls_integer := 0;
+  DML_UPDATE             constant pls_integer := 1;
+  DML_MERGE              constant pls_integer := 2;
+  DML_DELETE             constant pls_integer := 3;
+
   subtype DMLContext is binary_integer;
 
+  function getFile (
+    p_directory in varchar2
+  , p_filename  in varchar2
+  ) 
+  return blob;
+
   procedure setFetchSize (p_nrows in number);
+    
+  function createDMLContext (
+    p_table_name in varchar2    
+  )
+  return DMLContext;
   
+  procedure mapColumn (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  );
+  
+  function loadData (
+    p_ctx       in DMLContext
+  , p_file      in blob
+  , p_sheet     in varchar2
+  , p_range     in varchar2 default null
+  , p_method    in binary_integer default DOM_READ
+  , p_password  in varchar2 default null
+  , p_dml_type  in pls_integer default DML_INSERT
+  , p_err_log   in varchar2 default null
+  )
+  return integer;
+
   /*
   EBNF grammar for the range_expr and column_list expression
 
@@ -80,30 +123,6 @@ create or replace package ExcelTable is
     string_literal ::= "'" { char } "'"
   
   */
-
-  /*
-  function createDMLContext (
-    p_table_name in varchar2    
-  )
-  return DMLContext;
-  
-  procedure mapColumn (
-    p_ctx_id   in DMLContext
-  , p_col_name in varchar2
-  , p_col_ref  in varchar2
-  , p_format   in varchar2 default null
-  );
-  
-  procedure insertData (
-    p_ctx_id    in DMLContext 
-  , p_file      in blob
-  , p_sheet     in varchar2 
-  , p_range     in varchar2 default null
-  , p_method    in binary_integer default DOM_READ
-  , p_password  in varchar2 default null
-  );
-  */
-  
   function getRows (
     p_file     in blob
   , p_sheet    in varchar2
@@ -147,21 +166,15 @@ create or replace package ExcelTable is
   );
 
   procedure tableFetch(
-    p_type   in out nocopy anytype
-  , p_ctx_id in out nocopy binary_integer
-  , nrows    in number
-  , rws      out nocopy anydataset
+    rtype   in out nocopy anytype
+  , ctx_id  in binary_integer
+  , nrows   in number
+  , rws     out nocopy anydataset
   );
   
   procedure tableClose(
     p_ctx_id  in binary_integer
   );
-  
-  function getFile (
-    p_directory in varchar2
-  , p_filename  in varchar2
-  ) 
-  return blob;
   
 end ExcelTable;
 /

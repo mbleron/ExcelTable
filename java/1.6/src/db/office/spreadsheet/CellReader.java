@@ -20,9 +20,9 @@ public class CellReader {
 	private static final String TAG_T = "t";
 	//private static final String TAG_IS = "is";
 	private static final String TAG_R = "r";
-	private static final String CT_SHAREDSTRING = "s";
+	//private static final String CT_SHAREDSTRING = "s";
 	//private static final String CELLTYPE_STR = "str";
-	private static final String CT_INLINESTR = "inlineStr";
+	//private static final String CT_INLINESTR = "inlineStr";
 	
 	private boolean done = false;
 	private int firstRow = 0;
@@ -148,10 +148,10 @@ public class CellReader {
 			String cellType = this.reader.getAttributeValue(null, TAG_T);
 			String cellValue = null;
 
-			if (CT_INLINESTR.equals(cellType)) {
+			if (Cell.CT_INLINESTR.equals(cellType)) {
 				// when t="inlineStr", <is> is the only child element allowed
 				cellValue = readInlineStr();
-			} else if (CT_SHAREDSTRING.equals(cellType)) {
+			} else if (Cell.CT_SHAREDSTRING.equals(cellType)) {
 				int idx = Integer.parseInt(readCellValue());
 				cellValue = this.strings[idx];
 			} else {
