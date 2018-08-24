@@ -38,7 +38,8 @@ public class Cell {
 		if (this.type == null || CT_NUMBER.equals(this.type)) {
 			BINARY_DOUBLE bdouble = null;
 			if (this.value != null && this.value.length() != 0) {
-				bdouble = new BINARY_DOUBLE(this.value);
+				//contrary to what the documentation says, BINARY_DOUBLE(String) is not implemented on 11.2.0.1
+				bdouble = new BINARY_DOUBLE(Double.parseDouble(this.value));
 			}
 			data = ANYDATA.convertDatum(bdouble);
 			
