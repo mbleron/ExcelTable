@@ -689,6 +689,9 @@ end;
 ```
 
 ## CHANGELOG
+### 2.3.1 (2018-09-15)
+* XUTL_XLS enhancement
+
 ### 2.3 (2018-08-23)
 * New API for DML operations
 * Internal modularization, unified interface for cell sources

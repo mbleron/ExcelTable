@@ -26,9 +26,8 @@ create or replace package xutl_xls is
 =========================================================================================
     Change history :
     Marc Bleron       2018-02-04     Creation
+    Marc Bleron       2018-09-13     Optimized call to read_CellBlock
 ====================================================================================== */
-  
-  --procedure read_all (p_wb in blob);
   
   procedure set_debug (p_mode in boolean);
   

@@ -346,7 +346,7 @@ create or replace package body xutl_xls is
     stream.available := stream.rsize;
     -- current record start
     stream.rstart := stream.offset;
-    debug('RECORD INFO ['||to_char(stream.rstart,'FM09999999')||'] '||stream.rt);
+    --debug('RECORD INFO ['||to_char(stream.rstart,'FM09999999')||'] '||stream.rt);
   end;
 
   procedure seek_first (
@@ -478,14 +478,14 @@ create or replace package body xutl_xls is
   end;
 
   function read_LabelSst (
-    stream in out nocopy Stream_T
-  , sst    in SST_T
+    ctx_id  in pls_integer
+  , stream  in out nocopy Stream_T
   )
   return String_T
   is
     idx  pls_integer := read_int32(stream) + 1;
   begin
-    return sst.strings(idx);
+    return ctx_cache(ctx_id).wb.sst.strings(idx);
   end;
 
   procedure read_XLString (
@@ -716,104 +716,101 @@ create or replace package body xutl_xls is
       debug(to_char(db.rgdb(i),'FM0XXX'));
     end loop;
   end;
-  
-  function read_CellBlock (
-    ctx      in out nocopy Context_T
-  --  stream   in out nocopy Stream_T
-  --, db       in DBCell_T
-  --, sst      in SST_T default null
-  --, rng      in Range_T
+
+  procedure read_CellBlock (
+    ctx_id  in pls_integer
+  , stream  in out nocopy Stream_T
+  , rng     in Range_T
+  , cells   in out nocopy ExcelTableCellList
   )
-  return ExcelTableCellList
   is
-    db     DBCell_T;
-    base   integer; -- end of 1st row
-    cb     integer; -- start of cell block
-    rw     binary_integer;
-    col    binary_integer;
-    num    number;
-    str    String_T;
-    cnt    pls_integer;
-    ftype  raw(1);
+    db          DBCell_T;
+    base        integer; -- end of 1st row
+    cb          integer; -- start of cell block
+    rw          binary_integer;
+    col         binary_integer;
+    num         number;
+    str         String_T;
+    cnt         pls_integer;
+    ftype       raw(1);
     
-    cells  ExcelTableCellList := ExcelTableCellList();
+    blockNum    pls_integer := ctx_cache(ctx_id).blockNum;
+    blockCount  pls_integer := ctx_cache(ctx_id).blockCount;
     
     procedure add_cell(v in anydata) is
     begin
-      if ctx.rng.colMap.exists(col) then
+      if rng.colMap.exists(col) then
         cells.extend;
-        cells(cells.last) := new ExcelTableCell(rw + 1, ctx.rng.colMap(col), '', v);
+        cells(cells.last) := new ExcelTableCell(rw + 1, rng.colMap(col), '', v);
       end if;
     end;
     
   begin
     
-    db := ctx.wb.idx.rgibRw(ctx.blockNum);
-    ctx.blockNum := ctx.blockNum + 1;
-    if ctx.blockNum > ctx.blockCount then
-      ctx.done := true;
+    db := ctx_cache(ctx_id).wb.idx.rgibRw(blockNum);
+    blockNum := blockNum + 1;
+    if blockNum > blockCount then
+      ctx_cache(ctx_id).done := true;
     end if;
     
     if db.dbRtrw != 0 then
       
       base := db.pos - db.dbRtrw + 20;
       cb := base + db.rgdb(1);     
-      seek(ctx.stream, cb);
+      seek(stream, cb);
       -- read cells until start of DBCell record
       loop
-        next_record(ctx.stream);
-        exit when ctx.stream.rt = RT_DBCELL;
-        rw := read_int16(ctx.stream);
+        next_record(stream);
+        exit when stream.rt = RT_DBCELL;
+        rw := read_int16(stream);
         
-        exit when rw > ctx.rng.lastRow;
-        continue when rw < ctx.rng.firstRow;
+        exit when rw > rng.lastRow;
+        continue when rw < rng.firstRow;
         
-        case ctx.stream.rt
+        case stream.rt
         when RT_MULRK then
           
-          col := read_int16(ctx.stream);
-          cnt := (ctx.stream.rsize - 6)/6;
+          col := read_int16(stream);
+          cnt := (stream.rsize - 6)/6;
           for i in 1 .. cnt loop
-            skip(ctx.stream, 2); -- ixfe
-            num := read_RK(ctx.stream);
+            skip(stream, 2); -- ixfe
+            num := read_RK(stream);
             add_cell(anydata.ConvertNumber(num));
             col := col + 1;
           end loop;
           
         when RT_MULBLANK then
           
-          col := read_int16(ctx.stream);
-          cnt := (ctx.stream.rsize - 6)/2;
+          col := read_int16(stream);
+          cnt := (stream.rsize - 6)/2;
           for i in 1 .. cnt loop
-            skip(ctx.stream, 2); -- ixfe
-            --print_cell('<BLANK>');
+            skip(stream, 2); -- ixfe
             col := col + 1;
           end loop;      
         
         else
-          col := read_int16(ctx.stream);
-          skip(ctx.stream, 2); -- ixfe
+          col := read_int16(stream);
+          skip(stream, 2); -- ixfe
           num := null;
           str := null;
-          case ctx.stream.rt
+          case stream.rt
           when RT_RK then
-            num := read_RK(ctx.stream);
+            num := read_RK(stream);
             add_cell(anydata.ConvertNumber(num));
           when RT_NUMBER then
-            num := read_Number(ctx.stream);
+            num := read_Number(stream);
             add_cell(anydata.ConvertNumber(num));
           when RT_BLANK then
             num := null;
-            --print_cell('<BLANK>');
           when RT_LABELSST then
-            str := read_LabelSst(ctx.stream, ctx.wb.sst);
+            str := read_LabelSst(ctx_id, stream);
             if str.is_lob then
               add_cell(anydata.ConvertClob(str.lobValue));           
             else
               add_cell(anydata.ConvertVarchar2(str.strValue));
             end if;
           when RT_FORMULA then
-            read_Formula(ctx.stream, str, num, ftype);
+            read_Formula(stream, str, num, ftype);
             if ftype = FT_STRING then
               if str.is_lob then
                 add_cell(anydata.ConvertClob(str.lobValue));           
@@ -833,7 +830,7 @@ create or replace package body xutl_xls is
     
     end if;
     
-    return cells;
+    ctx_cache(ctx_id).blockNum := blockNum;
     
   end;
 
@@ -908,7 +905,7 @@ create or replace package body xutl_xls is
       pos := read_int32(stream) + 1;
       wb.idx.rgibRw.extend;
       wb.idx.rgibRw(i).pos := pos;
-      debug('Row block #'||to_char(i)||' = '||to_char(pos, 'FM0XXXXXXX'));
+      --debug('Row block #'||to_char(i)||' = '||to_char(pos, 'FM0XXXXXXX'));
     end loop;
     for i in 1 .. cnt loop
       read_DBCell(stream, wb.idx.rgibRw(i));
@@ -1328,11 +1325,14 @@ create or replace package body xutl_xls is
   )
   return ExcelTableCellList
   is
-    cells  ExcelTableCellList;
+    cells  ExcelTableCellList := ExcelTableCellList();
   begin
-    if not ctx_cache(p_ctx_id).done then
-      cells := read_CellBlock(ctx_cache(p_ctx_id));
-    end if;
+    -- return up to 16 blocks per iteration, to be parameterized in the next release
+    for i in 1 .. 16 loop
+      if not ctx_cache(p_ctx_id).done then
+        read_CellBlock(p_ctx_id, ctx_cache(p_ctx_id).stream, ctx_cache(p_ctx_id).rng, cells);
+      end if;
+    end loop;
     return cells;
   end;
   
@@ -1357,13 +1357,13 @@ create or replace package body xutl_xls is
   pipelined
   is
     ctx_id  pls_integer;
-    cells   ExcelTableCellList;   
+    cells   ExcelTableCellList := ExcelTableCellList();   
   begin
     
     ctx_id := new_context(p_file, p_sheet, p_password, p_cols, p_firstRow, p_lastRow);
 
     while not ctx_cache(ctx_id).done loop
-      cells := read_CellBlock(ctx_cache(ctx_id));
+      read_CellBlock(ctx_id, ctx_cache(ctx_id).stream, ctx_cache(ctx_id).rng, cells);
       for i in 1 .. cells.count loop
         pipe row (cells(i));
       end loop;
