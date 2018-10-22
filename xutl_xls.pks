@@ -27,6 +27,7 @@ create or replace package xutl_xls is
     Change history :
     Marc Bleron       2018-02-04     Creation
     Marc Bleron       2018-09-13     Optimized call to read_CellBlock
+    Marc Bleron       2018-10-17     New buffered LOB reader
 ====================================================================================== */
   
   procedure set_debug (p_mode in boolean);
@@ -65,7 +66,8 @@ create or replace package xutl_xls is
   , p_lastRow   in pls_integer default null
   )
   return ExcelTableCellList
-  pipelined;
+  pipelined
+  ;
 
 end xutl_xls;
 /

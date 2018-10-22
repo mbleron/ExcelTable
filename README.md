@@ -689,6 +689,9 @@ end;
 ```
 
 ## CHANGELOG
+### 2.3.2 (2018-10-22)
+* XUTL_XLS enhancement (new buffered lob reader)
+
 ### 2.3.1 (2018-09-15)
 * XUTL_XLS enhancement
 

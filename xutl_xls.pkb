@@ -66,15 +66,33 @@ create or replace package body xutl_xls is
   , lastRow   pls_integer
   , colMap    ColumnMap_T
   );
+  
+  type Record_T is record (
+    rt         raw(2)
+  , current    integer
+  , sz         pls_integer
+  , available  pls_integer
+  , has_next   boolean := true
+  , next       integer
+  );
+  
+  type Buffer_T is record (
+    content    raw(32767)
+  , offset     pls_integer := 0
+  , sz         pls_integer
+  , available  pls_integer := 0
+  );
 
   type Stream_T is record (
     content    blob
   , sz         integer
   , offset     integer
-  , rt         raw(2)
-  , rsize      binary_integer
-  , rstart     integer
-  , available  pls_integer
+  --, rt         raw(2)
+  --, rsize      binary_integer
+  --, rstart     integer
+  --, available  pls_integer
+  , rec        Record_T
+  , buf        Buffer_T 
   );
   
   type String_T is record (
@@ -244,8 +262,8 @@ create or replace package body xutl_xls is
   )
   is
   begin
-    if stream.rt != rt then
-      error(-20731, ERR_EXPECTED_REC, stream.rstart-4, recordTypeMap(raw2int(rt)));
+    if stream.rec.rt != rt then
+      error(-20731, ERR_EXPECTED_REC, stream.rec.current, recordTypeMap(raw2int(rt)));
     end if;    
   end;
   
@@ -260,6 +278,18 @@ create or replace package body xutl_xls is
     return ( utl_raw.bit_and(byteVal, bitmask) = bitmask );
   end;
 
+  procedure bufferize (
+    stream  in out nocopy Stream_T
+  )
+  is
+  begin
+    stream.offset := stream.offset + stream.buf.offset - 1;
+    stream.buf.sz := 32767;
+    dbms_lob.read(stream.content, stream.buf.sz, stream.offset, stream.buf.content);
+    stream.buf.available := stream.buf.sz;
+    stream.buf.offset := 1;
+  end;
+
   function read_bytes (
     stream  in out nocopy Stream_T
   , amount  in pls_integer
@@ -268,10 +298,22 @@ create or replace package body xutl_xls is
   is
     bytes  raw(32767);
   begin
-    bytes := dbms_lob.substr(stream.content, amount, stream.offset);
-    stream.offset := stream.offset + amount;
-    stream.available := stream.available - amount;
+    
+    if amount > 0 then
+      
+      if amount > stream.buf.available then
+        bufferize(stream);
+      end if;
+      
+      bytes := utl_raw.substr(stream.buf.content, stream.buf.offset, amount);
+      stream.buf.offset := stream.buf.offset + amount;
+      stream.buf.available := stream.buf.available - amount;
+      stream.rec.available := stream.rec.available - amount;
+    
+    end if;
+    
     return bytes;
+    
   end;
 
   function read_int8 (
@@ -310,9 +352,11 @@ create or replace package body xutl_xls is
   begin
     stream.content := wbFile;
     stream.sz := dbms_lob.getlength(stream.content);
-    stream.offset := 0;
-    stream.rsize := 0;
-    stream.rstart := 1;
+    stream.offset := 1;
+    stream.buf.sz := 0;
+    stream.rec.next := 1;
+    --stream.rec.sz := 0;
+    --stream.rstart := 1;
     return stream;
   end;
   
@@ -325,28 +369,36 @@ create or replace package body xutl_xls is
   end;
 
   procedure next_record (
-    stream in out nocopy Stream_T
-  , skip_header in boolean default true
+    stream       in out nocopy Stream_T
   ) 
   is
+    HEADER_SIZE  constant pls_integer := 4;
   begin
-    stream.offset := stream.rstart + stream.rsize;
-    -- record type
-    stream.rt := read_bytes(stream, 2);
-    -- record size
-    stream.rsize := read_int16(stream);
     
-    if not skip_header then
-      -- include header size
-      stream.rsize := stream.rsize + 4;
-      -- 4-byte rewind
-      stream.offset := stream.offset - 4;
+    if stream.rec.next >= stream.offset + stream.buf.sz then
+      stream.offset := stream.rec.next;
+      --stream.buf.sz := 0;
+      stream.buf.offset := 1;
+      bufferize(stream);
+      stream.rec.current := stream.offset;
+    else
+      stream.buf.offset := stream.rec.next - stream.offset + 1;
+      stream.buf.available := stream.buf.sz - stream.buf.offset + 1;
+      stream.rec.current := stream.rec.next;
     end if;
     
-    stream.available := stream.rsize;
-    -- current record start
-    stream.rstart := stream.offset;
-    --debug('RECORD INFO ['||to_char(stream.rstart,'FM09999999')||'] '||stream.rt);
+    -- record type
+    stream.rec.rt := read_bytes(stream, 2);
+    -- record size
+    stream.rec.sz := read_int16(stream);
+    
+    stream.rec.available := stream.rec.sz;
+    -- next record absolute offset
+    stream.rec.next := stream.rec.current + stream.rec.sz + HEADER_SIZE;
+    stream.rec.has_next := (stream.rec.next < stream.sz);
+    
+    --debug('RECORD INFO ['||to_char(stream.rec.current,'FM09999999')||'] '||stream.rec.rt);
+    
   end;
 
   procedure seek_first (
@@ -355,8 +407,7 @@ create or replace package body xutl_xls is
   )
   is
   begin
-    next_record(stream);
-    while stream.offset < stream.sz and stream.rt != record_type loop
+    while stream.rec.has_next and stream.rec.rt != record_type loop
       next_record(stream);
     end loop;
   end;
@@ -367,8 +418,16 @@ create or replace package body xutl_xls is
   )
   is
   begin
-    stream.rstart := pos;
-    stream.rsize := 0;
+    
+    if pos >= stream.offset + stream.buf.sz or pos < stream.offset then
+      stream.offset := pos;
+      stream.buf.sz := 0;
+    else
+      stream.buf.offset := pos - stream.offset + 1;
+    end if;
+    stream.rec.next := pos;
+    stream.rec.has_next := (stream.rec.next < stream.sz);
+  
   end;
   
   procedure skip (
@@ -380,20 +439,29 @@ create or replace package body xutl_xls is
     skipped integer;
   begin
     
-    if stream.available >= amount then
+    if stream.rec.available >= amount then
       
-      stream.offset := stream.offset + amount;
-      stream.available := stream.available - amount;
+      if amount > stream.buf.available then
+        bufferize(stream);
+      end if;
+      
+      stream.buf.offset := stream.buf.offset + amount;
+      stream.buf.available := stream.buf.available - amount;
+      
+      stream.rec.available := stream.rec.available - amount;
       
     else
       
-      rem := amount - stream.available;
+      rem := amount - stream.rec.available;
       while rem != 0 loop
         next_record(stream);
         expect(stream, RT_CONTINUE);
-        skipped := least(rem, stream.available);
-        stream.offset := stream.offset + skipped;
-        stream.available := stream.available - skipped;
+        skipped := least(rem, stream.rec.available);
+        
+        stream.buf.offset := stream.buf.offset + skipped;
+        stream.buf.available := stream.buf.available - skipped;
+        
+        stream.rec.available := stream.rec.available - skipped;
         rem := rem - skipped;
       end loop;
     
@@ -538,7 +606,7 @@ create or replace package body xutl_xls is
         csname := 'WE8ISO8859P1';
       end if;
       
-      amt := least(stream.available, rem * csz); -- byte amount to read      
+      amt := least(stream.rec.available, rem * csz); -- byte amount to read      
       buf := read_bytes(stream, amt);
       cbuf := utl_i18n.raw_to_char(buf, csname);
       
@@ -690,7 +758,7 @@ create or replace package body xutl_xls is
   begin
     db.pos := pos;
     db.dbRtrw := read_int32(stream);
-    rgdbSize := (stream.rsize - 4)/2; -- array size = (record size - 4)/2
+    rgdbSize := (stream.rec.sz - 4)/2; -- array size = (record size - 4)/2
     debug(rgdbSize);
     for i in 1 .. rgdbSize loop
       db.rgdb(i) := read_int16(stream);
@@ -709,7 +777,7 @@ create or replace package body xutl_xls is
     seek(stream, db.pos);
     next_record(stream);
     db.dbRtrw := read_int32(stream);
-    rgdbSize := (stream.rsize - 4)/2; -- array size = (record size - 4)/2
+    rgdbSize := (stream.rec.sz - 4)/2; -- array size = (record size - 4)/2
     debug(rgdbSize);
     for i in 1 .. rgdbSize loop
       db.rgdb(i) := read_int16(stream);
@@ -747,6 +815,7 @@ create or replace package body xutl_xls is
     
   begin
     
+    debug('blockNum = '||blockNum);
     db := ctx_cache(ctx_id).wb.idx.rgibRw(blockNum);
     blockNum := blockNum + 1;
     if blockNum > blockCount then
@@ -756,22 +825,23 @@ create or replace package body xutl_xls is
     if db.dbRtrw != 0 then
       
       base := db.pos - db.dbRtrw + 20;
-      cb := base + db.rgdb(1);     
+      cb := base + db.rgdb(1);
+      debug('cb = '||cb);
       seek(stream, cb);
       -- read cells until start of DBCell record
       loop
         next_record(stream);
-        exit when stream.rt = RT_DBCELL;
+        exit when stream.rec.rt = RT_DBCELL;
         rw := read_int16(stream);
         
         exit when rw > rng.lastRow;
         continue when rw < rng.firstRow;
         
-        case stream.rt
+        case stream.rec.rt
         when RT_MULRK then
           
           col := read_int16(stream);
-          cnt := (stream.rsize - 6)/6;
+          cnt := (stream.rec.sz - 6)/6;
           for i in 1 .. cnt loop
             skip(stream, 2); -- ixfe
             num := read_RK(stream);
@@ -782,7 +852,7 @@ create or replace package body xutl_xls is
         when RT_MULBLANK then
           
           col := read_int16(stream);
-          cnt := (stream.rsize - 6)/2;
+          cnt := (stream.rec.sz - 6)/2;
           for i in 1 .. cnt loop
             skip(stream, 2); -- ixfe
             col := col + 1;
@@ -793,7 +863,7 @@ create or replace package body xutl_xls is
           skip(stream, 2); -- ixfe
           num := null;
           str := null;
-          case stream.rt
+          case stream.rec.rt
           when RT_RK then
             num := read_RK(stream);
             add_cell(anydata.ConvertNumber(num));
@@ -851,9 +921,10 @@ create or replace package body xutl_xls is
     sst.strings.extend(sst.cstUnique);
     
     for i in 1 .. sst.cstUnique loop
+      
       sst.strings(i) := read_XLString(stream, ST_RICHUNISTR);
       
-      if stream.available = 0 then
+      if stream.rec.available = 0 then
         next_record(stream);
       end if;
       
@@ -882,7 +953,7 @@ create or replace package body xutl_xls is
     
     -- move to Index record
     next_record(stream);
-    while stream.offset < stream.sz and stream.rt != RT_INDEX loop
+    while stream.rec.next <= stream.sz and stream.rec.rt != RT_INDEX loop
       next_record(stream);
     end loop; 
   
@@ -1008,8 +1079,8 @@ create or replace package body xutl_xls is
 
     wb.comments := ExcelTableCellList();
     
-    while stream.offset < stream.sz loop
-      case stream.rt 
+    while stream.rec.has_next loop
+      case stream.rec.rt 
       when RT_OBJ then
         read_Obj(stream, wb);
       when RT_NOTE then
@@ -1028,24 +1099,26 @@ create or replace package body xutl_xls is
   , password  in varchar2
   )
   is
-    BLOCKSIZE  pls_integer;
+    DUMMY_HEADER constant raw(4) := hextoraw('00000000');
+    BLOCKSIZE    pls_integer;
         
-    baseKey      raw(5);
-    derivedKey   raw(16);
-    blockNum     pls_integer := 0;
-    blockBuffer  raw(1024);
-    decryptedBlock  raw(1024);
-    blockOffset  pls_integer;
+    baseKey              raw(5);
+    derivedKey           raw(16);
+    blockNum             pls_integer := 0;
+    blockBuffer          raw(1024);
+    decryptedBlock       raw(1024);
+    blockOffset          pls_integer;
     
-    leftInBlock  pls_integer;
-    numBlocks    pls_integer;
+    leftInBlock          pls_integer;
+    numBlocks            pls_integer;
 
-    chnkStart    pls_integer;
-    chnkLen      pls_integer;   
-    rangeStart   pls_integer;
-    rangeEnd     pls_integer;
+    chnkStart            pls_integer;
+    chnkLen              pls_integer;   
+    rangeStart           pls_integer;
+    rangeEnd             pls_integer;
     
-    targetOffset integer := 0;
+    targetOffset         integer := 0;
+    dummyHeaderSplitPos  pls_integer;
     
     type chunk_t is record (offset pls_integer, len pls_integer);
     type chunk_list_t is table of chunk_t;
@@ -1116,7 +1189,7 @@ create or replace package body xutl_xls is
     
     procedure fill_block (chunk in raw)
     is
-      chunkSize  pls_integer := utl_raw.length(chunk);
+      chunkSize  pls_integer := nvl(utl_raw.length(chunk),0);
     begin
       blockBuffer := utl_raw.concat(blockBuffer, chunk);
       blockOffset := blockOffset + chunkSize;
@@ -1128,15 +1201,16 @@ create or replace package body xutl_xls is
     
   begin
     
-    baseKey := xutl_offcrypto.get_key_binary_rc4_base(read_bytes(stream, stream.rsize), password);
+    baseKey := xutl_offcrypto.get_key_binary_rc4_base(read_bytes(stream, stream.rec.sz), password);
     -- rewind
     seek(stream, 1);
   
     init_block(blockNum);
     
-    next_record(stream, false);
-    while stream.offset < stream.sz loop
+    while stream.rec.has_next loop
     
+      next_record(stream);
+      
       -- [MS-XLS] 2.2.10
       -- When obfuscating or encrypting BIFF records in these streams the record type 
       -- and record size components MUST NOT be obfuscated or encrypted. 
@@ -1146,7 +1220,7 @@ create or replace package body xutl_xls is
       -- and RRDHead (section 2.4.226). 
       -- Additionally, the lbPlyPos field of the BoundSheet8 record (section 2.4.28) MUST NOT be encrypted.
       case 
-      when stream.rt in (
+      when stream.rec.rt in (
         RT_BOF
       , RT_FILEPASS
       , RT_USREXCL
@@ -1157,35 +1231,41 @@ create or replace package body xutl_xls is
       )
       then
         -- whole record
-        add_chunk(blockOffset, stream.rsize);
-      when stream.rt = RT_BOUNDSHEET8 then
+        add_chunk(blockOffset, stream.rec.sz + 4);
+      when stream.rec.rt = RT_BOUNDSHEET8 then
         -- record header + lbPlyPos (4 bytes)
         add_chunk(blockOffset, 8);
       else
         -- record header only
         add_chunk(blockOffset, 4);
-      end case;      
-    
-      if stream.rsize <= leftInBlock then
+      end case;
+      
+      dummyHeaderSplitPos := least(leftInBlock, 4);
+      
+      fill_block(utl_raw.substr(DUMMY_HEADER, 1, dummyHeaderSplitPos));
+      
+      if dummyHeaderSplitPos < 4 then
+        fill_block(utl_raw.substr(DUMMY_HEADER, dummyHeaderSplitPos+1));
+      end if;      
+      
+      if stream.rec.sz <= leftInBlock then
         -- read all record data and append to current block
-        fill_block(read_bytes(stream, stream.rsize));
+        fill_block(read_bytes(stream, stream.rec.sz));
         
       else      
         -- read record data that fits in the current block
         fill_block(read_bytes(stream, leftInBlock));       
         -- read record data in chunk of 1024 bytes
-        numBlocks := trunc(stream.available/1024);
+        numBlocks := trunc(stream.rec.available/1024);
         for i in 1 .. numBlocks loop
           fill_block(read_bytes(stream, 1024));
         end loop;
         -- read rest of available record data
-        if stream.available != 0 then
-          fill_block(read_bytes(stream, stream.available));         
+        if stream.rec.available != 0 then
+          fill_block(read_bytes(stream, stream.rec.available));         
         end if;
       
       end if;
-      
-      next_record(stream, false);
       
     end loop;
     
@@ -1206,9 +1286,9 @@ create or replace package body xutl_xls is
     wb.sheets := BoundSheetList_T();
     
     next_record(stream);
-    while stream.offset < stream.sz and stream.rt != RT_EOF loop
+    while stream.rec.rt != RT_EOF loop
       
-      case stream.rt
+      case stream.rec.rt
       when RT_FILEPASS then
         
         debug('The workbook is encrypted');
@@ -1216,7 +1296,7 @@ create or replace package body xutl_xls is
           error(-20730, ERR_NO_PASSWORD);
         else
           -- save pointer to next record
-          pos := stream.rstart + stream.rsize;
+          pos := stream.rec.next;
           decrypt(stream, password);
           -- restore stream
           seek(stream, pos);
@@ -1253,24 +1333,23 @@ create or replace package body xutl_xls is
   is
     stream  Stream_T;
     wb      Workbook_T;
+    rng     Range_T;
   begin
-    stream.content := p_wb;
-    stream.sz := dbms_lob.getlength(stream.content);
-    stream.offset := 0;
-    stream.rsize := 0;
-    stream.rstart := 1;
+    rng.firstRow := 0;
+    rng.lastRow := 65535;
+    rng.colMap := parseColumnList('A,B,C,D,E,F,G');
+
+    stream := open_stream(p_wb);
+    read_Globals(stream, wb, null);
+    --read_Index(stream, wb, 'DataSource', rng);
+    --wb.comments := ExcelTableCellList();
     
-    wb.comments := ExcelTableCellList();
-    
-    next_record(stream);
-    while stream.offset < stream.sz loop
-      if stream.rt = RT_OBJ then
-        read_Obj(stream, wb);
-      elsif stream.rt = RT_NOTE then  
-        read_NoteSh(stream, wb);
-      end if;
+    /*
+    while stream.rec.has_next loop
       next_record(stream);
+      debug('RECORD INFO ['||to_char(stream.rec.current,'FM09999999')||'] '||stream.rec.rt);
     end loop;
+    */
   
   end;
   
@@ -1357,12 +1436,13 @@ create or replace package body xutl_xls is
   pipelined
   is
     ctx_id  pls_integer;
-    cells   ExcelTableCellList := ExcelTableCellList();   
+    cells   ExcelTableCellList;
   begin
     
     ctx_id := new_context(p_file, p_sheet, p_password, p_cols, p_firstRow, p_lastRow);
 
     while not ctx_cache(ctx_id).done loop
+      cells := ExcelTableCellList();
       read_CellBlock(ctx_id, ctx_cache(ctx_id).stream, ctx_cache(ctx_id).rng, cells);
       for i in 1 .. cells.count loop
         pipe row (cells(i));
