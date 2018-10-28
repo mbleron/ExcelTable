@@ -409,6 +409,7 @@ create or replace package body xutl_xls is
   begin
     while stream.rec.has_next and stream.rec.rt != record_type loop
       next_record(stream);
+      exit when stream.rec.rt = RT_EOF;
     end loop;
   end;
 
@@ -1079,7 +1080,7 @@ create or replace package body xutl_xls is
 
     wb.comments := ExcelTableCellList();
     
-    while stream.rec.has_next loop
+    while stream.rec.rt != RT_EOF loop
       case stream.rec.rt 
       when RT_OBJ then
         read_Obj(stream, wb);
@@ -1089,6 +1090,7 @@ create or replace package body xutl_xls is
       else
         exit when found_NoteSh;
       end case;
+      --exit when not stream.rec.has_next;
       next_record(stream);
     end loop;
 
