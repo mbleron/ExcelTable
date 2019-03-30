@@ -21,18 +21,28 @@ public class ReadContext {
 
 	public CellReader reader;
 	
-	public ReadContext(InputStream worksheet, InputStream sharedStrings, String columns, int firstRow, int lastRow)
+	private static ReadContext get(int key) throws CellReaderException {
+		ReadContext ctx;
+		try {
+			ctx = (ReadContext) ContextManager.getContext(key);
+		} catch (InvalidKeyException e) {
+			throw new CellReaderException("Invalid context key", e);
+		}
+		return ctx;
+	}
+	
+	public ReadContext(InputStream sharedStrings, String columns, int firstRow, int lastRow)
 			throws IOException, CellReaderException {
 
-		this.reader = new CellReader(worksheet, sharedStrings, columns, firstRow, lastRow);
+		this.reader = new CellReader(sharedStrings, columns, firstRow, lastRow);
 
 	}
 	
-	public static int initialize(Blob worksheet, Blob sharedStrings, String columns, int firstRow, int lastRow, int vc2MaxSize)
+	public static int initialize(Blob sharedStrings, String columns, int firstRow, int lastRow, int vc2MaxSize)
 			throws IOException, CellReaderException, SQLException {
 				
 		VC2_MAXSIZE = vc2MaxSize; 
-		ReadContext ctx = new ReadContext(worksheet.getBinaryStream(), (sharedStrings!=null)?sharedStrings.getBinaryStream():null, columns, firstRow, lastRow);
+		ReadContext ctx = new ReadContext((sharedStrings!=null)?sharedStrings.getBinaryStream():null, columns, firstRow, lastRow);
 		
 		int key = 0;
 		try {
@@ -44,20 +54,21 @@ public class ReadContext {
 
 	}
 	
+	public static void addSheet (int key, int index, Blob content) throws CellReaderException {
+		ReadContext ctx = ReadContext.get(key);
+		ctx.reader.addSheet(index, content);
+	}
+	
 	public static Array iterate(int key, int nrows) 
 			throws SQLException, CellReaderException {
 		
 		OracleConnection conn = (OracleConnection) DriverManager.getConnection("jdbc:default:connection:");
-		ReadContext ctx;
-		try {
-			ctx = (ReadContext) ContextManager.getContext(key);
-		} catch (InvalidKeyException e) {
-			throw new CellReaderException("Invalid context key", e);
-		}
+		ReadContext ctx = ReadContext.get(key);
 		
 		int listSize = nrows * ctx.reader.getColumnCount();
 		List<Struct> array = new ArrayList<Struct>(listSize);
-		List<Row> rows = ctx.reader.readRows(nrows, false, 0);
+		ctx.reader.initSheetIterator();
+		List<Row> rows = ctx.reader.readRows(nrows);
 		for (Row r : rows) {
 			for (Cell c : r) {
 				array.add(conn.createStruct("EXCELTABLECELL", c.getOraData(conn)));

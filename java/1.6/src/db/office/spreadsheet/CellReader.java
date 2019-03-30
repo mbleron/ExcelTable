@@ -2,9 +2,11 @@ package db.office.spreadsheet;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.sql.Blob;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
@@ -14,6 +16,7 @@ import javax.xml.stream.XMLStreamReader;
 
 public class CellReader {
 
+	private static final String TAG_SHEETDATA = "sheetData";
 	private static final String TAG_ROW = "row";
 	private static final String TAG_C = "c";
 	private static final String TAG_V = "v";
@@ -28,77 +31,126 @@ public class CellReader {
 	private int firstRow = 0;
 	private int lastRow;
 	private InputStream source;
-	private XMLStreamReader reader;
+	private XMLInputFactory factory;
+	private XMLStreamReader reader = null;
 	private String[] strings;
 	private Set<String> columns;
+	private List<Sheet> sheets;
+	private Iterator<Sheet> sheetIterator = null;
+	private int sheetIndex = 0;
 	
-	public CellReader(InputStream worksheet, InputStream sharedStrings, String columnList, int firstRow, int lastRow)
+	public CellReader(InputStream sharedStrings, String columnList, int firstRow, int lastRow)
 			throws CellReaderException, IOException {
 		
-		this.source = worksheet;
-		XMLInputFactory factory = XMLInputFactory.newInstance();
-		//factory.setProperty(XMLInputFactory.IS_COALESCING, Boolean.TRUE);
-		try {
-			this.reader = factory.createXMLStreamReader(worksheet);
-			if (sharedStrings != null) {
-				this.strings = SharedStringsHandler.getStrings(sharedStrings);
-			}
-		} catch (Exception e) {
-			throw new CellReaderException("Error during CellReader initialization", e);
+		this.factory = XMLInputFactory.newInstance();
+		if (sharedStrings != null) {
+			this.strings = SharedStringsHandler.getStrings(sharedStrings);
 		}
 			
 		this.columns = new HashSet<String>(Arrays.asList(columnList.split(",")));
+		this.firstRow = firstRow;
 		this.lastRow = lastRow;
-		this.readRows(1, true, firstRow);	
+		this.sheets = new ArrayList<Sheet>();
 		
 	}
 	
-	public void close () throws CellReaderException, IOException {
-		try {
-			this.reader.close();
-		} catch (XMLStreamException e) {
-			throw new CellReaderException("Error while closing CellReader", e);
-		} finally {
-			this.source.close();
+	public void close() throws CellReaderException, IOException {
+		if (this.reader != null) {
+			try {
+				this.reader.close();
+				this.reader = null;
+			} catch (XMLStreamException e) {
+				throw new CellReaderException("Error while closing CellReader", e);
+			} finally {
+				this.source.close();
+			}
 		}
 	}
 	
-	public int getColumnCount () {
+	public int getColumnCount() {
 		return this.columns.size();
-	}	
+	}
 	
-	public List<Row> readRows(int nrows, boolean skipMode, int startWith) throws CellReaderException {
-
+	private void setReaderSource(InputStream is) throws CellReaderException {
+		
+		try {
+			this.reader = factory.createXMLStreamReader(is);
+		} catch (XMLStreamException e) {
+			throw new CellReaderException("Error while creating XMLStreamReader instance", e);
+		}
+		
+	}
+	
+	public void initSheetIterator() throws CellReaderException {
+		if (this.sheetIterator == null) {
+			this.sheetIterator = this.sheets.iterator();
+			this.nextSheet();
+		}		
+	}
+	
+	public void addSheet(int index, Blob content) {
+		this.sheets.add(new Sheet(index, content));
+	}
+	
+	public void nextSheet() throws CellReaderException {
+		
+		try {
+			// close existing Reader instance
+			this.close();
+			
+			// switch to next sheet
+			if (this.sheetIterator.hasNext()) {
+				Sheet sheet = this.sheetIterator.next();
+				this.sheetIndex = sheet.getIndex();
+				this.source = sheet.getContent().getBinaryStream();
+				setReaderSource(this.source);
+			} else {
+				this.done = true;
+			}
+			
+		} catch (Exception e) {
+			if (e instanceof CellReaderException) {
+				throw (CellReaderException) e;
+			}
+			else {
+				throw new CellReaderException("Error in nextSheet() method", e);
+			}
+		}
+		
+	}
+	
+	public List<Row> readRows(int nrows) throws CellReaderException {
+		
 		List<Row> rows = null;
 
 		try {
 
-			if (!skipMode) {
-				rows = new ArrayList<Row>(nrows);
-				if (this.firstRow != 0) {
-					rows.add(readRow(this.firstRow));
-					this.firstRow = 0;
-					nrows--;
-				}
-			}
-
+			rows = new ArrayList<Row>(nrows);
+			
 			while (!this.done && this.reader.hasNext() && nrows > 0) {
+				
 				int event = this.reader.next();
-				if (event == XMLStreamReader.START_ELEMENT 
-						&& this.reader.getLocalName().equals(TAG_ROW)) {
-					int rowRef = Integer.parseInt(this.reader.getAttributeValue(null, TAG_R));
-
-					if (!skipMode) {
-						rows.add(readRow(rowRef));
-						nrows--;
-						if (this.lastRow != -1 && rowRef >= this.lastRow) {
-							done = true;
-							break;
+				
+				switch (event) {
+				case XMLStreamReader.START_ELEMENT:	
+					if (this.reader.getLocalName().equals(TAG_ROW)) {
+	
+						int rowRef = Integer.parseInt(this.reader.getAttributeValue(null, TAG_R));
+	
+						if (rowRef >= this.firstRow) {
+							rows.add(readRow(rowRef));
+							nrows--;
+							if (this.lastRow != -1 && rowRef >= this.lastRow) {
+								this.nextSheet();
+							}
 						}
-
-					} else if (rowRef >= startWith) {
-						this.firstRow = rowRef;
-						break;
+						
+					} 
+					break;
+					
+				case XMLStreamReader.END_ELEMENT:
+					if (this.reader.getLocalName().equals(TAG_SHEETDATA)) {
+						this.nextSheet();
 					}
 				}
 			}
@@ -113,7 +165,7 @@ public class CellReader {
 	
 	private Row readRow(int rowRef) throws XMLStreamException {
 		
-	    Row row = new Row(rowRef, this.columns.size());
+		Row row = new Row(rowRef, this.columns.size());
 	    Cell cell;
 		
 		while (this.reader.hasNext()) {
@@ -158,10 +210,10 @@ public class CellReader {
 				cellValue = readCellValue();
 			}
 
-			cell = new Cell(cellRef, cellValue, cellType);
+			cell = new Cell(cellRef, cellValue, cellType, this.sheetIndex);
 
 		} else {
-			cell = new Cell(cellRef, "", "");
+			cell = new Cell(cellRef, "", "", this.sheetIndex);
 		}
 
 		return cell;

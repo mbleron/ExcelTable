@@ -1,4 +1,5 @@
-﻿# ExcelTable - An Oracle SQL Interface for MS Excel and ODF Spreadsheet Files
+
+# ExcelTable - An Oracle SQL Interface for MS Excel and ODF Spreadsheet Files
 
 ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls), or ODF spreadsheet file (.ods) as if it were an external table.  
 It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
@@ -14,6 +15,9 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 
 > Version 2.3 : 
 > New API for DML operations
+
+> Version 3.0 : 
+> Multi-sheet support
 
 ## Bug tracker
 
@@ -59,6 +63,7 @@ Create the following objects, in this order :
 ```
 
 ```
+@ExcelTableSheetList.tps
 @ExcelTableCell.tps
 @ExcelTableCellList.tps
 @xutl_xls.pks
@@ -84,9 +89,9 @@ JAR files to deploy depend on the database version :
 * Versions < 11\.2\.0\.4  
 Except for version 11\.2\.0\.4 which supports JDK 6, Oracle 11g only supports JDK 5 (Java 1.5).
 Load the following jar files in order to use the streaming method : 
-  + stax-api-1.0-2.jar  
-  + sjsxp-1.0.2.jar  
-  + exceldbtools-1.5.jar
+  + [stax-api-1.0-2.jar](./java/lib/stax-api-1.0-2.jar)  
+  + [sjsxp-1.0.2.jar](./java/lib/sjsxp-1.0.2.jar)  
+  + [exceldbtools-1.5.jar](./java/lib/exceldbtools-1.5.jar)
 
 ```
 loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/stax-api-1.0-2.jar
@@ -97,14 +102,29 @@ loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.5.jar
 
 * Versions >= 11\.2\.0\.4  
 The StAX API is included in JDK 6, as well as the Sun Java implementation (SJXSP), so for those versions one only needs to load the following jar file :  
-  + exceldbtools-1.6.jar
+  + [exceldbtools-1.6.jar](./java/lib/exceldbtools-1.6.jar)
 
 ```
 loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
 ```
 
-## Usage
+## ExcelTable Subprograms and Usage
 
+* [getRows](#getrows-function)  
+* [getFile](#getfile-function)
+* [setFetchSize](#setfetchsize-procedure)  
+* [useSheetPattern](#usesheetpattern-procedure)  
+* [getCursor](#getcursor-function)  
+* [createDMLContext](#createdmlcontext-function)  
+* [mapColumn](#mapcolumn-function)
+* [loadData](#loaddata-function)  
+---
+
+### getRows Function
+This is the main function of ExcelTable. It returns a set of rows from the input spreadsheet file, based on the sheet(s), range and projection defined in the parameters.  
+As of ExcelTable 3.0, the function is overloaded to accept both a single sheet name (as a regex pattern), or a sheet list. 
+
+**Overload 1**
 ```sql
 function getRows (
   p_file     in blob
@@ -117,17 +137,59 @@ function getRows (
 return anydataset pipelined
 using ExcelTableImpl;
 ```
+**Overload 2**
+```sql
+function getRows (
+  p_file     in blob
+, p_sheets   in ExcelTableSheetList
+, p_cols     in varchar2
+, p_range    in varchar2 default null
+, p_method   in binary_integer default DOM_READ
+, p_password in varchar2 default null
+) 
+return anydataset pipelined
+using ExcelTableImpl;
+```
 
-* `p_file` : Input Office file (.xlsx, .xlsm, .xlsb, .xls or .ods format).
-A helper function `ExcelTable.getFile` is available to directly reference the file from a directory.
-* `p_sheet` : Worksheet name
-* `p_cols` : Column list (see [specs](#columns-syntax-specification) below)
-* `p_range` : Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)
-* `p_method` : Read method - `DOM_READ` (0) the default, or `STREAM_READ` (1). The parameter value is ignored if the file is not a .xlsx or .xlsm file.
-* `p_password` : Optional - password used to encrypt the spreadsheet document
+Parameter|Description|Mandatory
+---|---|---
+`p_file`|Input spreadsheet file (.xlsx, .xlsm, .xlsb, .xls or .ods format), as a BLOB. <br/>A helper function [getFile()](#getfile-function) is available to directly reference the file from a directory.|Yes
+`p_sheet`|Sheet name. <br/>This parameter is interpreted as a regular expression pattern, if the feature has been enabled via [useSheetPattern](#usesheetpattern-procedure) procedure (see note below).|Yes
+`p_sheets`|Sheet list, of `ExcelTableSheetList` data type. <br/>Provides a list of sheet names, e.g. `ExcelTableSheetList('Sheet1','Sheet2','Sheet3')`|Yes
+`p_cols`|Column list (see [specs](#columns-syntax-specification) below)|Yes
+`p_range`|Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)|No
+`p_method`|Read method. <br/>`DOM_READ` : 0 (default value), or `STREAM_READ` : 1. <br/>This parameter is ignored if the file is not a .xlsx or .xlsm file.|No
+`p_password`|Password used to encrypt the spreadsheet document.|No
 
+**Note :**  
+As of ExcelTable 3.0, `p_sheet` parameter can accept a regex pattern in order to reference multiple sheets, e.g. `'^Sheet[1-3]'`.  
+For backward compatibility, this feature is disabled by default. It may be toggled dynamically by calling [useSheetPattern](#usesheetpattern-procedure) procedure, or enabled by default by changing the initial value of `sheet_pattern_enabled` variable in ExcelTable package body : 
+```sql
+sheet_pattern_enabled  boolean := true;
+```
 
----  
+---
+### getFile function
+Loads a file from a directory, as a temporary BLOB. 
+
+```sql
+function getFile (
+  p_directory in varchar2
+, p_filename  in varchar2
+)
+return blob;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_directory`|Directory name.|Yes
+`p_filename`|Input spreadsheet file name.|Yes
+
+**Note :**  
+As of Oracle 12.2, getFile() may be replaced by the built-in [TO_BLOB(_bfile_)](https://docs.oracle.com/en/database/oracle/oracle-database/12.2/sqlrf/TO_BLOB-bfile.html) SQL function.
+
+---
+### setFetchSize procedure
 ```sql
 procedure setFetchSize (p_nrows in number);
 ```
@@ -135,8 +197,16 @@ Use setFetchSize() to control the number of rows returned by each invocation of 
 If the number of rows requested by the client is greater than the fetch size, the fetch size is used instead.  
 The default fetch size is 100.  
 
+---
+### useSheetPattern procedure
+Toggles sheet-pattern feature on or off.  
+If set to true, `p_sheet` parameter in [getRows](#getrows-function), [getCursor](#getcursor-function) and [loadData](#loaddata-function) functions is interpreted as a regular expression pattern.
+```sql
+procedure useSheetPattern (p_state in boolean);
+```
 
 ---  
+### getCursor function
 ```sql
 function getCursor (
   p_file     in blob
@@ -148,11 +218,23 @@ function getCursor (
 )
 return sys_refcursor;
 ```
-getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by an equivalent getRows() call.  
+```sql
+function getCursor (
+  p_file     in blob
+, p_sheets   in ExcelTableSheetList
+, p_cols     in varchar2
+, p_range    in varchar2 default null
+, p_method   in binary_integer default DOM_READ
+, p_password in varchar2 default null    
+)
+return sys_refcursor;
+```
+getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by an equivalent [getRows](#getrows-function) call.  
 It may be useful in PL/SQL code where static reference to table function returning ANYDATASET is not supported.  
 
 ---
-DML API (new in version 2.3)
+### DML API
+### createDMLContext function 
 ```sql
 function createDMLContext (
   p_table_name in varchar2    
@@ -160,13 +242,14 @@ function createDMLContext (
 return DMLContext;
 ```
 createDMLContext() initializes a new DML context based on the input table/view name.  
-Argument p_table_name may be a simple or qualified SQL name, with no database link part, for example :   
+The parameter `p_table_name` may be a simple or qualified SQL name, with no database link part.  
+For example :   
 `MY_TABLE`  
 `MY_SCHEMA.MY_TABLE`  
 `"myTable"`  
 `MY_SCHEMA."myTable"`  
 
-The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines `mapColumn()` and `loadData()`.
+The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines [mapColumn](#mapcolumn-function) and [loadData](#loaddata-function).
 
 __Example__ : 
 ```
@@ -177,7 +260,8 @@ begin
   ...
   
 ```
-##
+<br/>
+### mapColumn function
 ```sql
 procedure mapColumn (
   p_ctx       in DMLContext
@@ -190,12 +274,14 @@ procedure mapColumn (
 ```
 mapColumn() associates a column from the target table to a column reference from the spreadsheet file.
 
-* `p_ctx` : a DMLContext value, as returned by a previous call to `createDMLContext` function.
-* `p_col_name` : column name from the target table
-* `p_col_ref` : column reference (A, B, C etc.)
-* `p_format` : Optional - a date or timestamp format mask, same as `p_format` argument from getRows() function
-* `p_meta` : Optional - allowed values are META_ORDINALITY and META_COMMENT, same as `FOR ORDINALITY` and `FOR METADATA (COMMENT)` clauses in the [column list](#columns-syntax-specification)
-* `p_key` : Optional - defaults to false - marks this column as a key of the input data set. At least one column must be marked as key in an UPDATE, MERGE or DELETE context.
+Parameter|Description|Mandatory
+---|---|---
+`p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
+`p_col_name`|Column name from the target table.|Yes
+`p_col_ref`|Column reference (A, B, C etc.)|No
+`p_format`|Date or timestamp format mask, same as `p_format` argument of [getRows](#getrows-function) function.|No
+`p_meta`|Metadata clause. <br/>One of `META_ORDINALITY`, `META_COMMENT`, `META_SHEET_NAME`, or `META_SHEET_INDEX`, same as `FOR ORDINALITY` and `FOR METADATA` clauses in the [column list](#columns-syntax-specification).|No
+`p_key`|Marks this column as a key of the input data set. <br/>At least one column must be marked as key in an UPDATE, MERGE or DELETE context.|No
 
 
 __Example__ : 
@@ -213,7 +299,8 @@ begin
   ...
   
 ```
-##
+<br/>
+### loadData function
 ```sql
 function loadData (
   p_ctx          in DMLContext
@@ -227,13 +314,33 @@ function loadData (
 )
 return integer;
 ```
-loadData() executes the data loading operation into the target table, using the mode specified in the `p_dml_type` argument.  
+```sql
+function loadData (
+  p_ctx          in DMLContext
+, p_file         in blob
+, p_sheets       in ExcelTableSheetList
+, p_range        in varchar2       default null
+, p_method       in binary_integer default DOM_READ
+, p_password     in varchar2       default null
+, p_dml_type     in pls_integer    default DML_INSERT
+, p_err_log      in varchar2       default null
+)
+return integer;
+```
+loadData() executes the data loading operation into the target table, using the mode specified by the `p_dml_type` argument.  
 An optional error logging clause is available.
 
-* `p_ctx` : a DMLContext value, as returned by a previous call to `createDMLContext` function.
-* `p_file`, `p_sheet`, `p_range`, `p_method`, `p_password`: same arguments as in `getRows()` function
-* `p_dml_type` : Optional - the DML context type, one of DML_INSERT, DML_UPDATE, DML_MERGE or DML_DELETE. Default is DML_INSERT
-* `p_err_log` : a text-literal [DML error logging](https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423) clause, to capture exceptions during load
+Parameter|Description|Mandatory
+---|---|---
+`p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
+`p_file`|Cf. [getRows](getrows-function) function|Yes
+`p_sheet`|Cf. [getRows](getrows-function) function|Yes
+`p_sheets`|Cf. [getRows](getrows-function) function|Yes
+`p_range`|Cf. [getRows](getrows-function) function|No
+`p_method`|Cf. [getRows](getrows-function) function|No
+`p_password`|Cf. [getRows](getrows-function) function|No
+`p_dml_type`|DML context type, one of `DML_INSERT`, `DML_UPDATE`, `DML_MERGE` or `DML_DELETE`. Default is DML_INSERT.|No
+`p_err_log`|A text-literal [DML error logging](https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423) clause, to capture exceptions during load.|No
 
 The function returns the number of rows affected in the operation.
 
@@ -292,10 +399,11 @@ A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE's one) is also av
 Each column definition (except for the one qualified with FOR ORDINALITY) may be complemented with an optional "COLUMN" clause to explicitly target a named column in the spreadsheet, instead of relying on the order of the declarations (relative to the range).
 Positional and named column definitions cannot be mixed.
  
-ExcelTable can also extract cell comments and project them as regular columns.  
-In order to do so, add this specific FOR METADATA clause : 
-
-`FOR METADATA (COMMENT)`
+ExcelTable can also extract additional cell and sheet metadata via the `FOR METADATA ()` clause, and project them as regular columns.  
+Available metadata are :  
+* Cell comment : `FOR METADATA (COMMENT)`  
+* Sheet name : `FOR METADATA (SHEET_NAME)`
+* Sheet index (1-based) : `FOR METADATA (SHEET_INDEX)`
 
 
 Examples :
@@ -312,7 +420,8 @@ Examples :
 ```
 
 ```
-  "COL1"  number        column 'A'
+  "SHEET" varchar2(30)  for metadata (sheet_name) 
+, "COL1"  number        column 'A'
 , "COL2"  varchar2(10)  column 'C'
 , "COL3"  clob          column 'D'
 ```
@@ -599,6 +708,64 @@ TRUE
  
 ```
 
+* Multi-sheet selection : 
+
+Using a sheet list
+```sql
+select x.* 
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','multisheet.xlsx')
+       , ExcelTableSheetList('Sheet2','Sheet3')
+       , q'{
+            "C1"         number column 'A'
+          , "SHEET_IDX"  number for metadata (sheet_index)
+          , "SHEET_NAME" varchar2(31 char) for metadata (sheet_name)
+          , "comment"    varchar2(4000) column 'A' for metadata (comment)
+          , "R_NUM"      for ordinality
+          }'
+       )
+     ) x
+;
+
+  C1  SHEET_IDX SHEET_NAME    comment                    R_NUM
+---- ---------- ------------- ------------------------ -------
+   1          1 Sheet2        Comment on first sheet         1
+   2          1 Sheet2                                       2
+   3          1 Sheet2                                       3
+   7          3 Sheet3                                       4
+   8          3 Sheet3                                       5
+   9          3 Sheet3        bleronm:                       6
+                              Comment on last sheet    
+ 
+```
+
+Using a sheet name pattern
+```sql
+exec ExcelTable.useSheetPattern(true);
+
+select x.* 
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','multisheet.xlsx')
+       , '^Sheet[12]'
+       , ' "C1" number
+         , "SHEET_IDX"  number            for metadata (sheet_index)
+         , "SHEET_NAME" varchar2(31 char) for metadata (sheet_name)'
+       )
+     ) x
+;
+
+  C1  SHEET_IDX SHEET_NAME
+---- ---------- ------------
+   1          1 Sheet2
+   2          1 Sheet2
+   3          1 Sheet2
+   4          2 Sheet1
+   5          2 Sheet1
+   6          2 Sheet1
+ 
+```
 
 * Using the DML API - example 1 : simple INSERT 
 
@@ -689,6 +856,9 @@ end;
 ```
 
 ## CHANGELOG
+### 3.0 (2019-04-01)
+* Multi-sheet support
+
 ### 2.3.2 (2018-10-22)
 * XUTL_XLS enhancement (new buffered lob reader)
 
@@ -741,7 +911,6 @@ end;
 
 * Added internal collection and LOB freeing
 
-
 ### 1.0 (2016-05-01)
 
 * Creation
@@ -750,4 +919,4 @@ end;
 
 ## Copyright and license
 
-Copyright 2016-2018 Marc Bleron. Released under MIT license.
+Copyright 2016-2019 Marc Bleron. Released under MIT license.

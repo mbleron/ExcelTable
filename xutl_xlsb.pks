@@ -3,7 +3,7 @@ create or replace package xutl_xlsb is
 
   MIT License
 
-  Copyright (c) 2018 Marc Bleron
+  Copyright (c) 2018-2019 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -28,18 +28,31 @@ create or replace package xutl_xlsb is
     Marc Bleron       2018-04-02     Creation
     Marc Bleron       2018-08-23     Bug fix : no row returned if fetch_size (p_nrows)
                                      is less than first row index
+    Marc Bleron       2018-09-02     Multi-sheet support
 ====================================================================================== */
-   
+  
+  type SheetEntry_T is record (name varchar2(31 char), relId varchar2(255 char));
+  type SheetEntries_T is table of SheetEntry_T;
+ 
   procedure set_debug (p_mode in boolean);
     
   function new_context (
-    p_sheet_part  in blob 
-  , p_sst_part    in blob
+    p_sst_part    in blob
   , p_cols        in varchar2 default null
   , p_firstRow    in pls_integer default null
   , p_lastRow     in pls_integer default null    
   )
   return pls_integer;
+
+  procedure add_sheet (
+    p_ctx_id   in pls_integer
+  , p_content  in blob
+  );
+  
+  function get_sheetEntries (
+    p_workbook  in blob
+  )
+  return SheetEntries_T;
  
   procedure free_context (
     p_ctx_id  in pls_integer 
@@ -56,13 +69,7 @@ create or replace package xutl_xlsb is
   )
   return ExcelTableCellList;
   
-  function get_sheetRelId (
-    p_workbook   in blob
-  , p_sheetName  in varchar2
-  )
-  return varchar2;
-  
-  function get_rows (
+/*  function get_rows (
     p_sheet_part  in blob 
   , p_sst_part    in blob
   , p_cols        in varchar2 default null
@@ -70,7 +77,7 @@ create or replace package xutl_xlsb is
   , p_lastRow     in pls_integer default null
   )
   return ExcelTableCellList
-  pipelined;
+  pipelined;*/
 
 end xutl_xlsb;
 /

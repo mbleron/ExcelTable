@@ -66,7 +66,7 @@ create or replace package body xutl_xls is
   , lastRow   pls_integer
   , colMap    ColumnMap_T
   );
-  
+
   type Record_T is record (
     rt         raw(2)
   , current    integer
@@ -87,10 +87,6 @@ create or replace package body xutl_xls is
     content    blob
   , sz         integer
   , offset     integer
-  --, rt         raw(2)
-  --, rsize      binary_integer
-  --, rstart     integer
-  --, available  pls_integer
   , rec        Record_T
   , buf        Buffer_T 
   );
@@ -143,6 +139,8 @@ create or replace package body xutl_xls is
   , rgibRw  DBCellArray_T
   );
   
+  type IndexArray_T is table of Index_T;
+  
   type Obj_T is record (
     ft  raw(2)
   , cb  raw(2)
@@ -167,9 +165,9 @@ create or replace package body xutl_xls is
     sheets    BoundSheetList_T
   , sheetMap  SheetMap_T
   , sst       SST_T
-  , idx       Index_T
-  , txtMap    TxOMap_T   
-  , comments  ExcelTableCellList
+  --, idx       Index_T
+  --, txtMap    TxOMap_T   
+  --, comments  ExcelTableCellList
   );
   
   type RK_T is record (
@@ -194,7 +192,9 @@ create or replace package body xutl_xls is
   , rng         Range_T
   , blockCount  pls_integer
   , blockNum    pls_integer
-  , done        boolean
+  , done        boolean := false
+  , shIndices   IndexArray_T
+  , currShIdx   pls_integer
   );
   
   type Context_cache_T is table of Context_T index by pls_integer;
@@ -355,8 +355,6 @@ create or replace package body xutl_xls is
     stream.offset := 1;
     stream.buf.sz := 0;
     stream.rec.next := 1;
-    --stream.rec.sz := 0;
-    --stream.rstart := 1;
     return stream;
   end;
   
@@ -369,7 +367,7 @@ create or replace package body xutl_xls is
   end;
 
   procedure next_record (
-    stream       in out nocopy Stream_T
+    stream in out nocopy Stream_T
   ) 
   is
     HEADER_SIZE  constant pls_integer := 4;
@@ -403,7 +401,7 @@ create or replace package body xutl_xls is
 
   procedure seek_first (
     stream       in out nocopy Stream_T
-  , record_type  in raw  
+  , record_type  in raw
   )
   is
   begin
@@ -428,7 +426,7 @@ create or replace package body xutl_xls is
     end if;
     stream.rec.next := pos;
     stream.rec.has_next := (stream.rec.next < stream.sz);
-  
+    
   end;
   
   procedure skip (
@@ -472,6 +470,7 @@ create or replace package body xutl_xls is
 
   function base26encode (colNum in pls_integer)
   return varchar2
+  result_cache
   is
   begin
     return chr(nullif(trunc(colNum/26),0)+64) || chr(mod(colNum,26)+65);
@@ -479,6 +478,7 @@ create or replace package body xutl_xls is
 
   function base26decode (colRef in varchar2)
   return pls_integer
+  result_cache
   is
   begin
     return ascii(substr(colRef,-1,1))-65 + nvl((ascii(substr(colRef,-2,1))-64)*26, 0);
@@ -511,6 +511,29 @@ create or replace package body xutl_xls is
       end loop;
     end if;
     return colMap; 
+  end;
+
+  procedure next_sheet (
+    ctx_id  in pls_integer
+  )
+  is
+    currShIdx       pls_integer := ctx_cache(ctx_id).currShIdx;
+    shIndicesCount  pls_integer := ctx_cache(ctx_id).shIndices.count;
+    has_next        boolean := (currShIdx < shIndicesCount);
+  begin
+    while has_next loop
+      currShIdx := currShIdx + 1;
+      debug('Switching to sheet '||currShIdx);
+      ctx_cache(ctx_id).blockNum := 1;
+      ctx_cache(ctx_id).blockCount := ctx_cache(ctx_id).shIndices(currShIdx).rgibRw.count;
+      exit when ctx_cache(ctx_id).blockCount != 0;
+      has_next := (currShIdx < shIndicesCount);
+    end loop;
+    if not has_next then
+      debug('End of sheet list');
+      ctx_cache(ctx_id).done := true;
+    end if;
+    ctx_cache(ctx_id).currShIdx := currShIdx;
   end;
   
   function read_RK (stream in out nocopy Stream_T)
@@ -785,6 +808,123 @@ create or replace package body xutl_xls is
       debug(to_char(db.rgdb(i),'FM0XXX'));
     end loop;
   end;
+  
+  /*function read_CellBlock (
+    ctx      in out nocopy Context_T
+  )
+  return ExcelTableCellList
+  is
+    db     DBCell_T;
+    base   integer; -- end of 1st row
+    cb     integer; -- start of cell block
+    rw     binary_integer;
+    col    binary_integer;
+    num    number;
+    str    String_T;
+    cnt    pls_integer;
+    ftype  raw(1);
+    
+    cells  ExcelTableCellList := ExcelTableCellList();
+    
+    procedure add_cell(v in anydata) is
+    begin
+      if ctx.rng.colMap.exists(col) then
+        cells.extend;
+        cells(cells.last) := new ExcelTableCell(rw + 1, ctx.rng.colMap(col), '', v, ctx.currShIdx);
+      end if;
+    end;
+    
+  begin
+    
+    db := ctx.shIndices(ctx.currShIdx).rgibRw(ctx.blockNum);
+    
+    if db.dbRtrw != 0 then
+      
+      base := db.pos - db.dbRtrw + 20;
+      cb := base + db.rgdb(1);     
+      seek(ctx.stream, cb);
+      -- read cells until start of DBCell record
+      loop
+        next_record(ctx.stream);
+        exit when ctx.stream.rt = RT_DBCELL;
+        rw := read_int16(ctx.stream);
+        
+        exit when rw > ctx.rng.lastRow;
+        continue when rw < ctx.rng.firstRow;
+        
+        case ctx.stream.rt
+        when RT_MULRK then
+          
+          col := read_int16(ctx.stream);
+          cnt := (ctx.stream.rsize - 6)/6;
+          for i in 1 .. cnt loop
+            skip(ctx.stream, 2); -- ixfe
+            num := read_RK(ctx.stream);
+            add_cell(anydata.ConvertNumber(num));
+            col := col + 1;
+          end loop;
+          
+        when RT_MULBLANK then
+          
+          col := read_int16(ctx.stream);
+          cnt := (ctx.stream.rsize - 6)/2;
+          for i in 1 .. cnt loop
+            skip(ctx.stream, 2); -- ixfe
+            col := col + 1;
+          end loop;      
+        
+        else
+          col := read_int16(ctx.stream);
+          skip(ctx.stream, 2); -- ixfe
+          num := null;
+          str := null;
+          case ctx.stream.rt
+          when RT_RK then
+            num := read_RK(ctx.stream);
+            add_cell(anydata.ConvertNumber(num));
+          when RT_NUMBER then
+            num := read_Number(ctx.stream);
+            add_cell(anydata.ConvertNumber(num));
+          when RT_BLANK then
+            num := null;
+            --print_cell('<BLANK>');
+          when RT_LABELSST then
+            str := read_LabelSst(ctx.stream, ctx.wb.sst);
+            if str.is_lob then
+              add_cell(anydata.ConvertClob(str.lobValue));           
+            else
+              add_cell(anydata.ConvertVarchar2(str.strValue));
+            end if;
+          when RT_FORMULA then
+            read_Formula(ctx.stream, str, num, ftype);
+            if ftype = FT_STRING then
+              if str.is_lob then
+                add_cell(anydata.ConvertClob(str.lobValue));           
+              else
+                add_cell(anydata.ConvertVarchar2(str.strValue));
+              end if;
+            else
+              add_cell(anydata.ConvertNumber(num));
+            end if;
+          else
+            null;
+          end case;
+        
+        end case;
+        
+      end loop;
+    
+    end if;
+
+    ctx.blockNum := ctx.blockNum + 1;
+    if ctx.blockNum > ctx.blockCount then
+      --ctx.done := true;
+      next_sheet(ctx);
+    end if;
+    
+    return cells;
+    
+  end;*/
 
   procedure read_CellBlock (
     ctx_id  in pls_integer
@@ -793,16 +933,17 @@ create or replace package body xutl_xls is
   , cells   in out nocopy ExcelTableCellList
   )
   is
-    db          DBCell_T;
-    base        integer; -- end of 1st row
-    cb          integer; -- start of cell block
-    rw          binary_integer;
-    col         binary_integer;
-    num         number;
-    str         String_T;
-    cnt         pls_integer;
-    ftype       raw(1);
-    
+    db     DBCell_T;
+    base   integer; -- end of 1st row
+    cb     integer; -- start of cell block
+    rw     binary_integer;
+    col    binary_integer;
+    num    number;
+    str    String_T;
+    cnt    pls_integer;
+    ftype  raw(1);
+
+    currShIdx   pls_integer := ctx_cache(ctx_id).currShIdx;
     blockNum    pls_integer := ctx_cache(ctx_id).blockNum;
     blockCount  pls_integer := ctx_cache(ctx_id).blockCount;
     
@@ -810,24 +951,18 @@ create or replace package body xutl_xls is
     begin
       if rng.colMap.exists(col) then
         cells.extend;
-        cells(cells.last) := new ExcelTableCell(rw + 1, rng.colMap(col), '', v);
+        cells(cells.last) := new ExcelTableCell(rw + 1, rng.colMap(col), '', v, currShIdx);
       end if;
     end;
     
   begin
     
-    debug('blockNum = '||blockNum);
-    db := ctx_cache(ctx_id).wb.idx.rgibRw(blockNum);
-    blockNum := blockNum + 1;
-    if blockNum > blockCount then
-      ctx_cache(ctx_id).done := true;
-    end if;
+    db := ctx_cache(ctx_id).shIndices(ctx_cache(ctx_id).currShIdx).rgibRw(blockNum);
     
     if db.dbRtrw != 0 then
       
       base := db.pos - db.dbRtrw + 20;
-      cb := base + db.rgdb(1);
-      debug('cb = '||cb);
+      cb := base + db.rgdb(1);     
       seek(stream, cb);
       -- read cells until start of DBCell record
       loop
@@ -873,8 +1008,10 @@ create or replace package body xutl_xls is
             add_cell(anydata.ConvertNumber(num));
           when RT_BLANK then
             num := null;
+            --print_cell('<BLANK>');
           when RT_LABELSST then
             str := read_LabelSst(ctx_id, stream);
+
             if str.is_lob then
               add_cell(anydata.ConvertClob(str.lobValue));           
             else
@@ -900,8 +1037,16 @@ create or replace package body xutl_xls is
       end loop;
     
     end if;
-    
-    ctx_cache(ctx_id).blockNum := blockNum;
+
+    blockNum := blockNum + 1;
+    if blockNum > blockCount then
+      next_sheet(ctx_id);
+      --currShIdx := ctx_cache(ctx_id).currShIdx;
+      --blockNum := ctx_cache(ctx_id).blockNum;
+      --blockCount := ctx_cache(ctx_id).blockCount;
+    else  
+      ctx_cache(ctx_id).blockNum := blockNum;
+    end if;
     
   end;
 
@@ -922,66 +1067,71 @@ create or replace package body xutl_xls is
     sst.strings.extend(sst.cstUnique);
     
     for i in 1 .. sst.cstUnique loop
-      
       sst.strings(i) := read_XLString(stream, ST_RICHUNISTR);
       
       if stream.rec.available = 0 then
         next_record(stream);
       end if;
       
-    end loop;    
+    end loop;
   
   end;
   
   procedure read_Index (
-    stream    in out nocopy Stream_T
-  , wb        in out nocopy Workbook_T
+    ctx       in out nocopy Context_T
+  --, stream    in out nocopy Stream_T
+  --, wb        in out nocopy Workbook_T
   , sheetName in varchar2
-  , rng       in Range_T          
+  --, rng       in Range_T          
   )
   is
     i              pls_integer;
     cnt            pls_integer;
     pos            integer;
     firstRowBlock  pls_integer;
-    lastRowBlock   pls_integer;   
+    lastRowBlock   pls_integer;
+    idx            Index_T;
   begin
     
     -- move file pointer to BOF of sheet
-    i := wb.sheetMap(sheetName);
-    pos := wb.sheets(i).lbPlyPos + 1;
-    seek(stream, pos);
+    i := ctx.wb.sheetMap(sheetName);
+    pos := ctx.wb.sheets(i).lbPlyPos + 1;
+    seek(ctx.stream, pos);
     
     -- move to Index record
-    next_record(stream);
-    while stream.rec.next <= stream.sz and stream.rec.rt != RT_INDEX loop
+    seek_first(ctx.stream, RT_INDEX);
+    /*next_record(stream);
+    while stream.offset < stream.sz and stream.rt != RT_INDEX loop
       next_record(stream);
-    end loop; 
+    end loop;*/
   
-    skip(stream, 4); -- reserved
-    wb.idx.rwMic := read_int32(stream);
-    wb.idx.rwMac := read_int32(stream);
-    skip(stream, 4); -- ibXf (ignored)
+    skip(ctx.stream, 4); -- reserved
+    idx.rwMic := read_int32(ctx.stream);
+    idx.rwMac := read_int32(ctx.stream);
+    skip(ctx.stream, 4); -- ibXf (ignored)
     
-    firstRowBlock := trunc((greatest(rng.firstRow, wb.idx.rwMic) - wb.idx.rwMic)/32);
-    lastRowBlock := trunc((least(rng.lastRow, wb.idx.rwMac - 1) - wb.idx.rwMic)/32);
+    firstRowBlock := trunc((greatest(ctx.rng.firstRow, idx.rwMic) - idx.rwMic)/32);
+    lastRowBlock := trunc((least(ctx.rng.lastRow, idx.rwMac - 1) - idx.rwMic)/32);
      
     -- number of DBCell pointers
     cnt := lastRowBlock - firstRowBlock + 1;
     
     -- skip till first row block pointer
-    skip(stream, firstRowBlock * 4);
-    wb.idx.rgibRw := DBCellArray_T();
+    skip(ctx.stream, firstRowBlock * 4);
+    idx.rgibRw := DBCellArray_T();
     
     for i in 1 .. cnt loop
-      pos := read_int32(stream) + 1;
-      wb.idx.rgibRw.extend;
-      wb.idx.rgibRw(i).pos := pos;
-      --debug('Row block #'||to_char(i)||' = '||to_char(pos, 'FM0XXXXXXX'));
+      pos := read_int32(ctx.stream) + 1;
+      idx.rgibRw.extend;
+      idx.rgibRw(i).pos := pos;
+      debug('Row block #'||to_char(i)||' = '||to_char(pos, 'FM0XXXXXXX'));
     end loop;
     for i in 1 .. cnt loop
-      read_DBCell(stream, wb.idx.rgibRw(i));
+      read_DBCell(ctx.stream, idx.rgibRw(i));
     end loop;
+    
+    ctx.shIndices.extend;
+    ctx.shIndices(ctx.shIndices.last) := idx;
     
   end;
 
@@ -1008,7 +1158,7 @@ create or replace package body xutl_xls is
 
   procedure read_Obj (
     stream  in out nocopy Stream_T
-  , wb      in out nocopy Workbook_T
+  , txtMap  in out nocopy TxOMap_T
   )
   is
     obj  Obj_T;
@@ -1018,7 +1168,7 @@ create or replace package body xutl_xls is
     obj.ot := read_int16(stream);
     obj.id := read_int16(stream);
     
-    debug(obj.ot);
+    debug('Object type = '||obj.ot);
     -- process only Note (comment) object
     if obj.ot = OT_NOTE then
       
@@ -1030,18 +1180,18 @@ create or replace package body xutl_xls is
       -- next record should be a TxO
       expect(stream, RT_TXO);
       
-      wb.txtMap(obj.id) := read_TxO(stream);
+      txtMap(obj.id) := read_TxO(stream);
     
     end if;
   end;
   
-  procedure read_NoteSh (
+  function read_NoteSh (
     stream  in out nocopy Stream_T
-  , wb      in out nocopy Workbook_T
+  , txtMap  in TxOMap_T
   )
+  return ExcelTableCell
   is
     note  NoteSh_T;
-    i     pls_integer;
   begin
     note.rw := read_int16(stream);
     note.col := read_int16(stream);
@@ -1049,49 +1199,48 @@ create or replace package body xutl_xls is
     note.idObj := read_int16(stream);
     note.stAuthor := read_XLString(stream, ST_UNISTR).strValue;
     
-    wb.comments.extend;
-    i := wb.comments.last;
-    wb.comments(i) := new ExcelTableCell(
-                            note.rw + 1
-                          , base26encode(note.col)
-                          , null
-                          , anydata.ConvertVarchar2(wb.txtMap(note.idObj))
-                          );
+    return new ExcelTableCell(
+                 note.rw + 1
+               , base26encode(note.col)
+               , null
+               , anydata.ConvertVarchar2(txtMap(note.idObj))
+               , null
+               );
   end;
 
   procedure read_Comments (
-    stream    in out nocopy Stream_T
-  , wb        in out nocopy Workbook_T
-  , sheetName in varchar2        
+    ctx        in out nocopy Context_T
+  , sheetName  in varchar2
+  , comments   in out nocopy ExcelTableCellList
   )
   is
     i             pls_integer;
     pos           integer;
     found_NoteSh  boolean := false;
+    txtMap        TxOMap_T;
   begin
     
     -- move file pointer to BOF of sheet
-    i := wb.sheetMap(sheetName);
-    pos := wb.sheets(i).lbPlyPos + 1;
-    seek(stream, pos);
+    debug('sheetName = '||sheetName);
+    i := ctx.wb.sheetMap(sheetName);
+    pos := ctx.wb.sheets(i).lbPlyPos + 1;
+    seek(ctx.stream, pos);
     
-    -- move to first Obj record
-    seek_first(stream, RT_OBJ);
-
-    wb.comments := ExcelTableCellList();
+    -- move to first Obj record, or EOF if no Obj found
+    seek_first(ctx.stream, RT_OBJ);
     
-    while stream.rec.rt != RT_EOF loop
-      case stream.rec.rt 
+    while ctx.stream.rec.rt != RT_EOF loop
+      case ctx.stream.rec.rt
       when RT_OBJ then
-        read_Obj(stream, wb);
+        read_Obj(ctx.stream, txtMap);
       when RT_NOTE then
         found_NoteSh := true;
-        read_NoteSh(stream, wb);
+        comments.extend;
+        comments(comments.last) := read_NoteSh(ctx.stream, txtMap);
       else
         exit when found_NoteSh;
       end case;
-      --exit when not stream.rec.has_next;
-      next_record(stream);
+      next_record(ctx.stream);
     end loop;
 
   end;
@@ -1155,6 +1304,7 @@ create or replace package body xutl_xls is
     procedure write_block
     is
     begin
+      debug('write_block');
       decryptedBlock := dbms_crypto.Decrypt(blockBuffer, dbms_crypto.ENCRYPT_RC4, derivedKey);
       blockSize := utl_raw.length(decryptedBlock);
       -- start overwriting original stream with decrypted block
@@ -1203,6 +1353,7 @@ create or replace package body xutl_xls is
     
   begin
     
+    debug('start decrypt');
     baseKey := xutl_offcrypto.get_key_binary_rc4_base(read_bytes(stream, stream.rec.sz), password);
     -- rewind
     seek(stream, 1);
@@ -1210,9 +1361,9 @@ create or replace package body xutl_xls is
     init_block(blockNum);
     
     while stream.rec.has_next loop
-    
-      next_record(stream);
       
+      next_record(stream);
+    
       -- [MS-XLS] 2.2.10
       -- When obfuscating or encrypting BIFF records in these streams the record type 
       -- and record size components MUST NOT be obfuscated or encrypted. 
@@ -1248,8 +1399,8 @@ create or replace package body xutl_xls is
       
       if dummyHeaderSplitPos < 4 then
         fill_block(utl_raw.substr(DUMMY_HEADER, dummyHeaderSplitPos+1));
-      end if;      
-      
+      end if;
+    
       if stream.rec.sz <= leftInBlock then
         -- read all record data and append to current block
         fill_block(read_bytes(stream, stream.rec.sz));
@@ -1272,6 +1423,8 @@ create or replace package body xutl_xls is
     end loop;
     
     write_block;
+    
+    debug('end decrypt');
   
   end;
   
@@ -1334,35 +1487,36 @@ create or replace package body xutl_xls is
   procedure read_all (p_wb in blob)
   is
     stream  Stream_T;
-    wb      Workbook_T;
-    rng     Range_T;
+    --wb      Workbook_T;
   begin
-    rng.firstRow := 0;
-    rng.lastRow := 65535;
-    rng.colMap := parseColumnList('A,B,C,D,E,F,G');
-
-    stream := open_stream(p_wb);
-    read_Globals(stream, wb, null);
-    --read_Index(stream, wb, 'DataSource', rng);
+    stream.content := p_wb;
+    stream.sz := dbms_lob.getlength(stream.content);
+    stream.offset := 0;
+    stream.rec.sz := 0;
+    --stream.rstart := 1;
+    
     --wb.comments := ExcelTableCellList();
     
-    /*
-    while stream.rec.has_next loop
+    next_record(stream);
+    while stream.offset < stream.sz loop
+      /*
+      if stream.rt = RT_OBJ then
+        read_Obj(stream, wb);
+      elsif stream.rt = RT_NOTE then  
+        read_NoteSh(stream, wb);
+      end if;
+      */
       next_record(stream);
-      debug('RECORD INFO ['||to_char(stream.rec.current,'FM09999999')||'] '||stream.rec.rt);
     end loop;
-    */
   
   end;
   
   function new_context (
-    p_file          in blob 
-  , p_sheet         in varchar2
-  , p_password      in varchar2 default null
-  , p_cols          in varchar2 default null
-  , p_firstRow      in pls_integer default null
-  , p_lastRow       in pls_integer default null
-  , p_readComments  in boolean default false
+    p_file      in blob 
+  , p_password  in varchar2 default null
+  , p_cols      in varchar2 default null
+  , p_firstRow  in pls_integer default null
+  , p_lastRow   in pls_integer default null
   )
   return pls_integer
   is
@@ -1375,15 +1529,18 @@ create or replace package body xutl_xls is
     
     ctx.stream := open_stream(p_file);
     read_Globals(ctx.stream, ctx.wb, p_password);
-    read_Index(ctx.stream, ctx.wb, p_sheet, ctx.rng);
+    --read_Index(ctx.stream, ctx.wb, p_sheet, ctx.rng);
     
-    if p_readComments then
+    /*if p_readComments then
       read_Comments(ctx.stream, ctx.wb, p_sheet);
-    end if;
+    end if;*/
     
-    ctx.blockNum := 1;
-    ctx.blockCount := ctx.wb.idx.rgibRw.count;
-    ctx.done := (ctx.blockNum > ctx.blockCount);
+    ctx.shIndices := IndexArray_T();
+    ctx.currShIdx := 0;
+    
+    --ctx.blockNum := 1;
+    --ctx.blockCount := ctx.wb.idx.rgibRw.count;
+    --ctx.done := (ctx.blockNum > ctx.blockCount);
     
     ctx_id := nvl(ctx_cache.last, 0) + 1;
     ctx_cache(ctx_id) := ctx;
@@ -1401,15 +1558,43 @@ create or replace package body xutl_xls is
     ctx_cache.delete(p_ctx_id);
   end;
 
+  function get_sheetList (
+    p_ctx_id  in pls_integer 
+  )
+  return ExcelTableSheetList
+  is
+    sheetList  ExcelTableSheetList := ExcelTableSheetList();
+    sheets     BoundSheetList_T := ctx_cache(p_ctx_id).wb.sheets;
+  begin
+    for i in 1 .. sheets.count loop
+      sheetList.extend;
+      sheetList(i) := sheets(i).stName;
+    end loop;
+    return sheetList;
+  end;
+
+  procedure add_sheets (
+    p_ctx_id     in pls_integer
+  , p_sheetList  in ExcelTableSheetList
+  )
+  is
+  begin
+    for i in 1 .. p_sheetList.count loop
+      read_Index(ctx_cache(p_ctx_id), p_sheetList(i));
+    end loop;
+    next_sheet(p_ctx_id);
+  end;
+
   function iterate_context (
     p_ctx_id  in pls_integer
+  , p_nrows   in pls_integer default null
   )
   return ExcelTableCellList
   is
-    cells  ExcelTableCellList := ExcelTableCellList();
+    numBlocks  pls_integer := ceil(nvl(p_nrows,1024)/32);
+    cells      ExcelTableCellList := ExcelTableCellList();
   begin
-    -- return up to 16 blocks per iteration, to be parameterized in the next release
-    for i in 1 .. 16 loop
+    for i in 1 .. numBlocks loop
       if not ctx_cache(p_ctx_id).done then
         read_CellBlock(p_ctx_id, ctx_cache(p_ctx_id).stream, ctx_cache(p_ctx_id).rng, cells);
       end if;
@@ -1418,17 +1603,20 @@ create or replace package body xutl_xls is
   end;
   
   function get_comments (
-    p_ctx_id  in pls_integer 
+    p_ctx_id     in pls_integer
+  , p_sheetName  in varchar2
   )
   return ExcelTableCellList
   is
+    comments  ExcelTableCellList := ExcelTableCellList();
   begin
-    return ctx_cache(p_ctx_id).wb.comments;
+    read_Comments(ctx_cache(p_ctx_id), p_sheetName, comments);
+    return comments;
   end;
   
   function getRows (
     p_file      in blob 
-  , p_sheet     in varchar2
+  --, p_sheet     in varchar2
   , p_password  in varchar2 default null
   , p_cols      in varchar2 default null
   , p_firstRow  in pls_integer default null
@@ -1438,10 +1626,10 @@ create or replace package body xutl_xls is
   pipelined
   is
     ctx_id  pls_integer;
-    cells   ExcelTableCellList;
+    cells   ExcelTableCellList;   
   begin
     
-    ctx_id := new_context(p_file, p_sheet, p_password, p_cols, p_firstRow, p_lastRow);
+    ctx_id := new_context(p_file, /*p_sheet, */ p_password, p_cols, p_firstRow, p_lastRow);
 
     while not ctx_cache(ctx_id).done loop
       cells := ExcelTableCellList();

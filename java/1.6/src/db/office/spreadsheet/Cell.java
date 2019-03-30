@@ -20,11 +20,13 @@ public class Cell {
 	private CellRef ref;
 	private String type;
 	private String value;
+	private int sheetIndex;
 	
-	public Cell (CellRef cellRef, String value, String type) {
+	public Cell (CellRef cellRef, String value, String type, int sheetIndex) {
 		this.ref = cellRef;
 		this.type = type;
 		this.value = value;
+		this.sheetIndex = sheetIndex;
 	}
 	
 	public String toString() {
@@ -57,7 +59,7 @@ public class Cell {
 		
 		}
 		
-		return new Object[] {this.ref.row, this.ref.column, this.type, data};
+		return new Object[] {this.ref.row, this.ref.column, this.type, data, this.sheetIndex};
 	}
 	
 }

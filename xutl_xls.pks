@@ -3,7 +3,7 @@ create or replace package xutl_xls is
 
   MIT License
 
-  Copyright (c) 2018 Marc Bleron
+  Copyright (c) 2018-2019 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -26,20 +26,18 @@ create or replace package xutl_xls is
 =========================================================================================
     Change history :
     Marc Bleron       2018-02-04     Creation
-    Marc Bleron       2018-09-13     Optimized call to read_CellBlock
     Marc Bleron       2018-10-17     New buffered LOB reader
+    Marc Bleron       2018-10-28     Multi-sheet support
 ====================================================================================== */
   
   procedure set_debug (p_mode in boolean);
   
   function new_context (
-    p_file          in blob 
-  , p_sheet         in varchar2
-  , p_password      in varchar2 default null
-  , p_cols          in varchar2 default null
-  , p_firstRow      in pls_integer default null
-  , p_lastRow       in pls_integer default null
-  , p_readComments  in boolean default false    
+    p_file      in blob 
+  , p_password  in varchar2 default null
+  , p_cols      in varchar2 default null
+  , p_firstRow  in pls_integer default null
+  , p_lastRow   in pls_integer default null   
   )
   return pls_integer;
   
@@ -49,25 +47,38 @@ create or replace package xutl_xls is
 
   function iterate_context (
     p_ctx_id  in pls_integer
+  , p_nrows   in pls_integer default null
   )
   return ExcelTableCellList;
 
-  function get_comments (
+  function get_sheetList (
     p_ctx_id  in pls_integer 
+  )
+  return ExcelTableSheetList;
+
+  procedure add_sheets (
+    p_ctx_id     in pls_integer
+  , p_sheetList  in ExcelTableSheetList
+  );
+
+  function get_comments (
+    p_ctx_id     in pls_integer
+  , p_sheetName  in varchar2
   )
   return ExcelTableCellList;
   
   function getRows (
     p_file      in blob 
-  , p_sheet     in varchar2
+  --, p_sheet     in varchar2
   , p_password  in varchar2 default null
   , p_cols      in varchar2 default null
   , p_firstRow  in pls_integer default null
   , p_lastRow   in pls_integer default null
   )
   return ExcelTableCellList
-  pipelined
-  ;
+  pipelined;
+  
+  --procedure read_all (p_wb in blob);
 
 end xutl_xls;
 /

@@ -3,7 +3,7 @@ create or replace package ExcelTable is
 
   MIT License
 
-  Copyright (c) 2016-2018 Marc Bleron
+  Copyright (c) 2016-2019 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -47,6 +47,7 @@ create or replace package ExcelTable is
     Marc Bleron       2018-04-24     Unzip utility : detection of stored files (no comp)
     Marc Bleron       2018-05-12     Added support for ODF spreadsheets (.ods)
     Marc Bleron       2018-08-22     new API for DML operations
+    Marc Bleron       2018-11-02     Added multi-sheet support
 ====================================================================================== */
 
   -- Read methods  
@@ -57,6 +58,8 @@ create or replace package ExcelTable is
   -- Metadata constants
   META_ORDINALITY        constant pls_integer := 0;
   META_COMMENT           constant pls_integer := 2;
+  META_SHEET_NAME        constant pls_integer := 8;
+  META_SHEET_INDEX       constant pls_integer := 16;
 
   -- DML operation types
   DML_INSERT             constant pls_integer := 0;
@@ -72,7 +75,9 @@ create or replace package ExcelTable is
   ) 
   return blob;
 
+  procedure setDebug (p_status in boolean);
   procedure setFetchSize (p_nrows in number);
+  procedure useSheetPattern (p_state in boolean);
     
   function createDMLContext (
     p_table_name in varchar2    
@@ -82,7 +87,7 @@ create or replace package ExcelTable is
   procedure mapColumn (
     p_ctx      in DMLContext
   , p_col_name in varchar2
-  , p_col_ref  in varchar2
+  , p_col_ref  in varchar2 default null
   , p_format   in varchar2 default null
   , p_meta     in pls_integer default null
   , p_key      in boolean default false
@@ -92,6 +97,18 @@ create or replace package ExcelTable is
     p_ctx       in DMLContext
   , p_file      in blob
   , p_sheet     in varchar2
+  , p_range     in varchar2 default null
+  , p_method    in binary_integer default DOM_READ
+  , p_password  in varchar2 default null
+  , p_dml_type  in pls_integer default DML_INSERT
+  , p_err_log   in varchar2 default null
+  )
+  return integer;
+
+  function loadData (
+    p_ctx       in DMLContext 
+  , p_file      in blob
+  , p_sheets    in ExcelTableSheetList 
   , p_range     in varchar2 default null
   , p_method    in binary_integer default DOM_READ
   , p_password  in varchar2 default null
@@ -123,6 +140,7 @@ create or replace package ExcelTable is
     string_literal ::= "'" { char } "'"
   
   */
+  
   function getRows (
     p_file     in blob
   , p_sheet    in varchar2
@@ -133,10 +151,41 @@ create or replace package ExcelTable is
   ) 
   return anydataset pipelined
   using ExcelTableImpl;
+
+  function getRows (
+    p_file     in blob
+  , p_sheets   in ExcelTableSheetList
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default DOM_READ
+  , p_password in varchar2 default null
+  ) 
+  return anydataset pipelined
+  using ExcelTableImpl;
+
+  function getCells (
+    p_file     in blob
+  , p_sheet    in anydata
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default DOM_READ
+  , p_password in varchar2 default null
+  )
+  return ExcelTableCellList pipelined;
   
   function getCursor (
     p_file     in blob
   , p_sheet    in varchar2
+  , p_cols     in varchar2
+  , p_range    in varchar2 default null
+  , p_method   in binary_integer default DOM_READ
+  , p_password in varchar2 default null    
+  )
+  return sys_refcursor;
+
+  function getCursor (
+    p_file     in blob
+  , p_sheets   in ExcelTableSheetList
   , p_cols     in varchar2
   , p_range    in varchar2 default null
   , p_method   in binary_integer default DOM_READ
@@ -156,13 +205,13 @@ create or replace package ExcelTable is
   return anytype;
 
   procedure tableStart (
-    p_file     in  blob
-  , p_sheet    in  varchar2
-  , p_range    in  varchar2
-  , p_cols     in  varchar2
-  , p_method   in  binary_integer
-  , p_ctx_id   out binary_integer
-  , p_password in  varchar2
+    p_file         in  blob
+  , p_sheetFilter  in  anydata
+  , p_range        in  varchar2
+  , p_cols         in  varchar2
+  , p_method       in  binary_integer
+  , p_ctx_id       out binary_integer
+  , p_password     in  varchar2
   );
 
   procedure tableFetch(
