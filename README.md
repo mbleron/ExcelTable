@@ -116,7 +116,7 @@ loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
 * [useSheetPattern](#usesheetpattern-procedure)  
 * [getCursor](#getcursor-function)  
 * [createDMLContext](#createdmlcontext-function)  
-* [mapColumn](#mapcolumn-function)
+* [mapColumn](#mapcolumn-procedure)  
 * [loadData](#loaddata-function)  
 ---
 
@@ -249,7 +249,7 @@ For example :
 `"myTable"`  
 `MY_SCHEMA."myTable"`  
 
-The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines [mapColumn](#mapcolumn-function) and [loadData](#loaddata-function).
+The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines [mapColumn](#mapcolumn-procedure) and [loadData](#loaddata-function).
 
 __Example__ : 
 ```
@@ -261,7 +261,8 @@ begin
   
 ```
 <br/>
-### mapColumn function
+
+### mapColumn procedure
 ```sql
 procedure mapColumn (
   p_ctx       in DMLContext
@@ -300,6 +301,7 @@ begin
   
 ```
 <br/>
+
 ### loadData function
 ```sql
 function loadData (
