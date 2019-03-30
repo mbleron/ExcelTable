@@ -377,7 +377,7 @@ _Metadata_clause::=_
 
 
 
-![Column metadata syntax diagram](./resources/diagram_column_metadata-406.png "Column metadata syntax diagram")
+![Column metadata syntax diagram](./resources/diagram_column_metadata-500.png "Column metadata syntax diagram")
 
 
 Column names must be declared using a quoted identifier.
@@ -856,7 +856,7 @@ end;
 ```
 
 ## CHANGELOG
-### 3.0 (2019-04-01)
+### 3.0 (2019-03-30)
 * Multi-sheet support
 
 ### 2.3.2 (2018-10-22)
