@@ -234,7 +234,7 @@ create or replace package body ExcelTable is
   debug_status           boolean := false;
   
   -- if set to true, p_sheet argument is interpreted as a regex pattern
-  sheet_pattern_enabled  boolean := true;
+  sheet_pattern_enabled  boolean := false;
   
   
   procedure setDebug (p_status in boolean)
