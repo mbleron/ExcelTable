@@ -4,20 +4,31 @@
 ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls), or ODF spreadsheet file (.ods) as if it were an external table.  
 It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
-## What's New in...
-> Version 2.0 : ExcelTable can read old 97-2003 Excel files (.xls).
+## Content
+* [What's New in...](#whats-new-in)  
+* [Bug tracker](#bug-tracker)  
+* [Installation](#installation)  
+* [ExcelTable Subprograms and Usage](#exceltable-subprograms-and-usage)  
+* [CHANGELOG](#changelog)  
 
-> Version 2.1 : ExcelTable can read .xlsb files.
+
+## What's New in...
+> Version 3.1 : 
+> New default value feature in DML API
+
+> Version 3.0 : 
+> Multi-sheet support
+
+> Version 2.3 : 
+> New API for DML operations
 
 > Version 2.2 : 
 > ExcelTable can read ODF (OpenDocument) spreadsheet files (.ods).  
 > Support for TIMESTAMP data type
 
-> Version 2.3 : 
-> New API for DML operations
+> Version 2.1 : ExcelTable can read .xlsb files.
 
-> Version 3.0 : 
-> Multi-sheet support
+> Version 2.0 : ExcelTable can read old 97-2003 Excel files (.xls).
 
 ## Bug tracker
 
@@ -117,6 +128,7 @@ loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
 * [getCursor](#getcursor-function)  
 * [createDMLContext](#createdmlcontext-function)  
 * [mapColumn](#mapcolumn-procedure)  
+* [mapColumnWithDefault](#mapcolumnwithdefault-procedure)  
 * [loadData](#loaddata-function)  
 ---
 
@@ -249,7 +261,7 @@ For example :
 `"myTable"`  
 `MY_SCHEMA."myTable"`  
 
-The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines [mapColumn](#mapcolumn-procedure) and [loadData](#loaddata-function).
+The function returns a handle to the context (of type ExcelTable.DMLContext), to be used by related routines [mapColumn](#mapcolumn-procedure), [mapColumnWithDefault](#mapcolumnwithdefault-procedure) and [loadData](#loaddata-function).
 
 __Example__ : 
 ```
@@ -267,10 +279,11 @@ begin
 procedure mapColumn (
   p_ctx       in DMLContext
 , p_col_name  in varchar2
-, p_col_ref   in varchar2
+, p_col_ref   in varchar2     default null
 , p_format    in varchar2     default null
 , p_meta      in pls_integer  default null
 , p_key       in boolean      default false
+, p_default   in anydata      default null
 );
 ```
 mapColumn() associates a column from the target table to a column reference from the spreadsheet file.
@@ -279,11 +292,11 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
 `p_col_name`|Column name from the target table.|Yes
-`p_col_ref`|Column reference (A, B, C etc.)|No
+`p_col_ref`|Column reference : A, B, C etc. <br/>If set to NULL, the target column will be loaded with the default value `p_default`.|No
 `p_format`|Date or timestamp format mask, same as `p_format` argument of [getRows](#getrows-function) function.|No
 `p_meta`|Metadata clause. <br/>One of `META_ORDINALITY`, `META_COMMENT`, `META_SHEET_NAME`, or `META_SHEET_INDEX`, same as `FOR ORDINALITY` and `FOR METADATA` clauses in the [column list](#columns-syntax-specification).|No
 `p_key`|Marks this column as a key of the input data set. <br/>At least one column must be marked as key in an UPDATE, MERGE or DELETE context.|No
-
+`p_default`|Default column value, as an ANYDATA instance. <br/>The target column will be loaded with the default value if the source column is NULL, or the column reference `p_col_ref` is NULL.|No
 
 __Example__ : 
 ```
@@ -297,8 +310,57 @@ begin
   ExcelTable.mapColumn(ctx, p_col_name => 'NAME', p_col_ref => 'B');
   ExcelTable.mapColumn(ctx, p_col_name => 'VAL',  p_col_ref => 'C');
   ExcelTable.mapColumn(ctx, p_col_name => 'VAL_COMMENT',  p_col_ref => 'C', p_meta => ExcelTable.META_COMMENT);
+  ExcelTable.mapColumn(ctx, p_col_name => 'LOAD_DATE', p_default => anydata.ConvertDate(sysdate));
   ...
   
+```
+See also : [mapColumnWithDefault](mapcolumnwithdefault-procedure) procedure.
+<br/>
+
+### mapColumnWithDefault procedure
+```sql
+procedure mapColumnWithDefault (
+  p_ctx      in DMLContext
+, p_col_name in varchar2
+, p_col_ref  in varchar2 default null
+, p_format   in varchar2 default null
+, p_meta     in pls_integer default null
+, p_key      in boolean default false
+, p_default  in varchar2
+);
+```
+```sql
+procedure mapColumnWithDefault (
+  p_ctx      in DMLContext
+, p_col_name in varchar2
+, p_col_ref  in varchar2 default null
+, p_format   in varchar2 default null
+, p_meta     in pls_integer default null
+, p_key      in boolean default false
+, p_default  in number
+);
+```
+```sql
+procedure mapColumnWithDefault (
+  p_ctx      in DMLContext
+, p_col_name in varchar2
+, p_col_ref  in varchar2 default null
+, p_format   in varchar2 default null
+, p_meta     in pls_integer default null
+, p_key      in boolean default false
+, p_default  in date
+);
+```
+mapColumnWithDefault() is a convenience procedure based on [mapColumn](#mapcolumn-procedure).  
+It is overloaded to accept either a (mandatory) VARCHAR2, NUMBER or DATE default value.  
+
+__Example__ : 
+```
+  ctx := ExcelTable.createDMLContext('MY_TARGET_TABLE');
+  
+  ExcelTable.mapColumn(ctx, p_col_name => 'ID',   p_col_ref => 'A', p_key => true);
+  ExcelTable.mapColumnWithDefault(ctx, p_col_name => 'VAL',  p_col_ref => 'C', p_default => 0);
+  ...
 ```
 <br/>
 
@@ -773,9 +835,10 @@ from table(
 
 ```sql
 create table tmp_sample2 (
-  id   number       primary key
-, name varchar2(10)
-, val  varchar2(30)
+  id       number       primary key
+, name     varchar2(10)
+, val      varchar2(30)
+, load_dt  date
 );
 ```
 ```
@@ -791,6 +854,7 @@ begin
   ExcelTable.mapColumn(ctx, p_col_name => 'ID',   p_col_ref => 'A');
   ExcelTable.mapColumn(ctx, p_col_name => 'NAME', p_col_ref => 'B');
   ExcelTable.mapColumn(ctx, p_col_name => 'VAL',  p_col_ref => 'C');
+  ExcelTable.mapColumnWithDefault(ctx, p_col_name => 'LOAD_DT', p_default => sysdate);
   
   nrows := 
   ExcelTable.loadData(
@@ -858,6 +922,9 @@ end;
 ```
 
 ## CHANGELOG
+### 3.1 (2019-04-20)
+* New default value feature in DML API
+
 ### 3.0 (2019-03-30)
 * Multi-sheet support
 

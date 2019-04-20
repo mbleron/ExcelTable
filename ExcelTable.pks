@@ -48,6 +48,7 @@ create or replace package ExcelTable is
     Marc Bleron       2018-05-12     Added support for ODF spreadsheets (.ods)
     Marc Bleron       2018-08-22     new API for DML operations
     Marc Bleron       2018-11-02     Added multi-sheet support
+    Marc Bleron       2019-03-31     Added default value feature to DML API
 ====================================================================================== */
 
   -- Read methods  
@@ -91,6 +92,37 @@ create or replace package ExcelTable is
   , p_format   in varchar2 default null
   , p_meta     in pls_integer default null
   , p_key      in boolean default false
+  , p_default  in anydata default null
+  );
+
+  procedure mapColumnWithDefault (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2 default null
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  , p_default  in varchar2
+  );
+   
+  procedure mapColumnWithDefault (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2 default null
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  , p_default  in number
+  );
+  
+  procedure mapColumnWithDefault (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2 default null
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  , p_default  in date
   );
   
   function loadData (

@@ -17,8 +17,8 @@ create or replace package body ExcelTable is
   LETTERS                constant varchar2(26) := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   
   META_VALUE             constant binary_integer := 1;
-  --META_COMMENT           constant binary_integer := 2;
   --META_FORMULA           constant binary_integer := 4;
+  META_CONSTANT          constant binary_integer := 32;
   
   INVALID_CHARACTER      constant varchar2(100) := 'Invalid character ''%s'' (%d) found at position %d';
   UNEXPECTED_EOF         constant varchar2(100) := 'Unexpected end-of-file';
@@ -128,6 +128,7 @@ create or replace package body ExcelTable is
   , for_ordinality boolean default false
   , cell_meta      binary_integer
   , is_key         boolean default false
+  , default_value  anydata default null
   );
   
   type QI_column_list_t is table of QI_column_t;
@@ -1361,9 +1362,12 @@ create or replace package body ExcelTable is
       elsif tdef.cols(i).metadata.col_ref is not null then
         col_ref_cnt := col_ref_cnt + 1;
         validate_column(tdef.cols(i).metadata.col_ref, tdef.cols(i).metadata.aname, tdef.range);
-      elsif pos < end_col and tdef.cols(i).metadata.col_ref is null then 
+      --elsif pos < end_col and tdef.cols(i).metadata.col_ref is null then 
+      elsif pos < end_col and cell_meta != META_CONSTANT then 
         tdef.cols(i).metadata.col_ref := base26encode(start_col + pos);
         pos := pos + 1;
+      elsif cell_meta = META_CONSTANT then
+        meta_check.cnt := meta_check.cnt + 1;
       else
         error(INVALID_COL, tdef.cols(i).metadata.aname);
       end if;
@@ -1379,16 +1383,17 @@ create or replace package body ExcelTable is
       -- check for duplicate column references
       if not ( tdef.cols(i).for_ordinality or cell_meta in (META_SHEET_NAME, META_SHEET_INDEX) ) then
         col_ref := tdef.cols(i).metadata.col_ref;
-        --cell_meta := tdef.cols(i).cell_meta;
-        if tdef.refSet.exists(col_ref) then       
-          cell_meta_ref := tdef.refSet(col_ref);                  
-          if bitand(cell_meta_ref, cell_meta) = 0  then
-            tdef.refSet(col_ref) := cell_meta_ref + cell_meta;
+        if col_ref is not null then
+          if tdef.refSet.exists(col_ref) then       
+            cell_meta_ref := tdef.refSet(col_ref);                  
+            if bitand(cell_meta_ref, cell_meta) = 0  then
+              tdef.refSet(col_ref) := cell_meta_ref + cell_meta;
+            else
+              error(DUPLICATE_COL_REF, col_ref);     
+            end if;        
           else
-            error(DUPLICATE_COL_REF, col_ref);     
-          end if;        
-        else
-          tdef.refSet(col_ref) := cell_meta;
+            tdef.refSet(col_ref) := cell_meta;
+          end if;
         end if;
       end if;
     
@@ -3454,6 +3459,30 @@ where t.id = :1
     current_row     integer;
     previous_sheet  pls_integer;
     current_sheet   pls_integer;
+    
+    procedure set_datum is
+    begin
+      if datum.val is not null then
+        case datum.val.GetTypeName() 
+        when 'SYS.VARCHAR2' then
+          datum.str := datum.val.AccessVarchar2();
+        when 'SYS.CHAR' then
+          datum.str := datum.val.AccessChar();
+        when 'SYS.NUMBER' then
+          datum.num := datum.val.AccessNumber();
+        when 'SYS.BINARY_DOUBLE' then
+          datum.num := to_number(datum.val.AccessBDouble());
+        when 'SYS.DATE' then
+          datum.dt := datum.val.AccessDate();
+          datum.ts := cast(datum.dt as timestamp);
+        when 'SYS.CLOB' then
+          datum.lob := datum.val.AccessClob();
+        when 'SYS.TIMESTAMP' then
+          datum.ts := datum.val.AccessTimestamp();
+          datum.dt := cast(datum.ts as date);
+        end case;
+      end if;
+    end;
 
     procedure setRow is
     begin
@@ -3482,27 +3511,13 @@ where t.id = :1
         
         elsif cell_map.exists(col_ref) then
         
-          datum.val := cell_map(col_ref).cellData;
-          if datum.val is not null then
-            case datum.val.GetTypeName() 
-            when 'SYS.VARCHAR2' then
-              datum.str := datum.val.AccessVarchar2();
-            when 'SYS.CHAR' then
-              datum.str := datum.val.AccessChar();
-            when 'SYS.NUMBER' then
-              datum.num := datum.val.AccessNumber();
-            when 'SYS.BINARY_DOUBLE' then
-              datum.num := to_number(datum.val.AccessBDouble());
-            when 'SYS.DATE' then
-              datum.dt := datum.val.AccessDate();
-              datum.ts := cast(datum.dt as timestamp);
-            when 'SYS.CLOB' then
-              datum.lob := datum.val.AccessClob();
-            when 'SYS.TIMESTAMP' then
-              datum.ts := datum.val.AccessTimestamp();
-              datum.dt := cast(datum.ts as date);
-            end case;
-          end if;
+          datum.val := nvl(cell_map(col_ref).cellData, cols(i).default_value);
+          set_datum;
+        
+        else
+        
+          datum.val := cols(i).default_value;
+          set_datum;
 
         end if;
         
@@ -3924,6 +3939,7 @@ where t.id = :1
   , p_format   in varchar2 default null
   , p_meta     in pls_integer default null
   , p_key      in boolean default false
+  , p_default  in anydata default null
   )
   is
   
@@ -3962,6 +3978,7 @@ where t.id = :1
     end if;
     
     col.metadata.aname := col_info.column_name;
+    col.default_value := p_default;
     
     if p_meta = META_ORDINALITY then
       
@@ -3999,20 +4016,70 @@ where t.id = :1
           error(UNSUPPORTED_DATATYPE, col_info.data_type);
         end if;
       end case;
-
+      
       col.metadata.col_ref := p_col_ref;
       col.is_key := p_key;
-      col.cell_meta := nvl(p_meta, META_VALUE);
-      if p_meta = META_COMMENT then
-        ctx_cache(p_ctx).def_cache.hasComment := true;
+      
+      if col.metadata.col_ref is null then
+        col.cell_meta := nvl(p_meta, META_CONSTANT);
+      else
+        col.cell_meta := nvl(p_meta, META_VALUE);
+        if col.cell_meta = META_COMMENT then
+          ctx_cache(p_ctx).def_cache.hasComment := true;
+        end if;
       end if;
-    
+      
     end if;
     
     add_column(ctx_cache(p_ctx).def_cache.cols);
     
   end;
 
+
+  procedure mapColumnWithDefault (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2 default null
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  , p_default  in varchar2
+  )
+  is
+  begin
+    mapColumn(p_ctx, p_col_name, p_col_ref, p_format, p_meta, p_key, anydata.ConvertVarchar2(p_default));
+  end;
+
+
+  procedure mapColumnWithDefault (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2 default null
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  , p_default  in number
+  )
+  is
+  begin
+    mapColumn(p_ctx, p_col_name, p_col_ref, p_format, p_meta, p_key, anydata.ConvertNumber(p_default));
+  end;
+  
+  
+  procedure mapColumnWithDefault (
+    p_ctx      in DMLContext
+  , p_col_name in varchar2
+  , p_col_ref  in varchar2 default null
+  , p_format   in varchar2 default null
+  , p_meta     in pls_integer default null
+  , p_key      in boolean default false
+  , p_default  in date
+  )
+  is
+  begin
+    mapColumn(p_ctx, p_col_name, p_col_ref, p_format, p_meta, p_key, anydata.ConvertDate(p_default));
+  end;
+  
 
   function loadDataImpl (
     p_ctx        in DMLContext 
