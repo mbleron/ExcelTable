@@ -1,7 +1,7 @@
 
 # ExcelTable - An Oracle SQL Interface for MS Excel and ODF Spreadsheet Files
 
-ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb and .xls), or ODF spreadsheet file (.ods) as if it were an external table.  
+ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb, .xls, .xml), or ODF spreadsheet file (.ods) as if it were an external table.  
 It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
 ## Content
@@ -13,6 +13,9 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 
 
 ## What's New in...
+> Version 3.2 : 
+> ExcelTable can read XML spreadsheetML files (.xml)
+
 > Version 3.1 : 
 > New default value feature in DML API
 
@@ -165,7 +168,7 @@ using ExcelTableImpl;
 
 Parameter|Description|Mandatory
 ---|---|---
-`p_file`|Input spreadsheet file (.xlsx, .xlsm, .xlsb, .xls or .ods format), as a BLOB. <br/>A helper function [getFile()](#getfile-function) is available to directly reference the file from a directory.|Yes
+`p_file`|Input spreadsheet file (.xlsx, .xlsm, .xlsb, .xls, .xml or .ods format), as a BLOB. <br/>A helper function [getFile()](#getfile-function) is available to directly reference the file from a directory.|Yes
 `p_sheet`|Sheet name. <br/>This parameter is interpreted as a regular expression pattern, if the feature has been enabled via [useSheetPattern](#usesheetpattern-procedure) procedure (see note below).|Yes
 `p_sheets`|Sheet list, of `ExcelTableSheetList` data type. <br/>Provides a list of sheet names, e.g. `ExcelTableSheetList('Sheet1','Sheet2','Sheet3')`|Yes
 `p_cols`|Column list (see [specs](#columns-syntax-specification) below)|Yes
@@ -314,7 +317,7 @@ begin
   ...
   
 ```
-See also : [mapColumnWithDefault](mapcolumnwithdefault-procedure) procedure.
+See also : [mapColumnWithDefault](#mapcolumnwithdefault-procedure) procedure.
 <br/>
 
 ### mapColumnWithDefault procedure
@@ -772,6 +775,32 @@ TRUE
  
 ```
 
+* Reading an XML spreadsheetML file ([sample_1.xml](./samples/sample_1.xml)) : 
+
+```sql
+select * 
+from table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('XL_DATA_DIR','sample_1.xml')
+       , 'data'
+       , q'{
+             "RN" for ordinality
+           , "C1"          number         column 'A'
+           , "C2"          varchar2(8)    column 'B'
+           , "C3"          number         column 'C'
+           , "C4"          timestamp(3)   column 'D'
+           , "C5"          clob           column 'E'
+           , "C6"          varchar2(4000) column 'F'
+           , "C6_COMMENT"  varchar2(4000) column 'F' for metadata (comment)
+           , "C7"          date           column 'G'
+           }'
+       ) 
+     ) x
+;
+ 
+```
+
+
 * Multi-sheet selection : 
 
 Using a sheet list
@@ -922,6 +951,9 @@ end;
 ```
 
 ## CHANGELOG
+### 3.2 (2019-05-01)
+* Added support for XML spreadsheetML files (.xml)
+
 ### 3.1 (2019-04-20)
 * New default value feature in DML API
 

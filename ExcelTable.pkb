@@ -54,7 +54,7 @@ create or replace package body ExcelTable is
   FILE_XLS               constant pls_integer := 2;
   FILE_ODS               constant pls_integer := 3;
   FILE_CSV               constant pls_integer := 4;
-  FILE_XMLSS             constant pls_integer := 5;
+  FILE_XSS               constant pls_integer := 5;
   
   -- OOX Constants
   RS_OFFICEDOC           constant varchar2(100) := 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
@@ -76,6 +76,9 @@ create or replace package body ExcelTable is
   ODF_TEXT_NSMAP         constant varchar2(100) := 'xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0"';
   ODF_OFFICE_TABLE_NSMAP constant varchar2(150) := ODF_OFFICE_NSMAP || ', ' || ODF_TABLE_NSMAP;
   ODF_OFFICE_TEXT_NSMAP  constant varchar2(150) := ODF_OFFICE_NSMAP || ', ' || ODF_TEXT_NSMAP;
+  -- XMLSS
+  XSS_DFLT_NSMAP         constant varchar2(100) := 'xmlns="urn:schemas-microsoft-com:office:spreadsheet"';
+  XSS_SS_NSMAP           constant varchar2(100) := 'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"';
   
   TMP_TABLE_QNAME        constant varchar2(261) := dbms_assert.enquote_name(sys_context('userenv','current_schema'),false)||'."EXCELTABLE$TMP"';
   QITD_BINARY_HEADER     constant raw(3) := hextoraw('A939FF');
@@ -632,7 +635,7 @@ create or replace package body ExcelTable is
       pi_start := pi_start + utl_raw.length(PI_START_PATTERN); 
       pi_stop := dbms_lob.instr(p_file, PI_STOP_PATTERN, pi_start);
       pi_content := trim(utl_i18n.raw_to_char(dbms_lob.substr(p_file, pi_stop - pi_start, pi_start),'AL32UTF8'));
-      output := ( pi_content = 'Excel.Sheet' );
+      output := ( pi_content = 'progid="Excel.Sheet"' );
     end if;
     return output;   
   end;
@@ -2737,6 +2740,101 @@ where t.id = :1
   end;
 
 
+  function XSS_getSheetList (
+    xml_content in xmltype
+  )
+  return ExcelTableSheetList
+  is
+    sheetList  ExcelTableSheetList;
+  begin
+    select sheetName
+    bulk collect into sheetList
+    from xmltable(
+           xmlnamespaces(
+             default 'urn:schemas-microsoft-com:office:spreadsheet'
+           , 'urn:schemas-microsoft-com:office:spreadsheet' as "ss"
+           )
+         , '/Workbook/Worksheet'
+           passing xml_content
+           columns sheetIdx  for ordinality
+                 , sheetName varchar2(128) path '@ss:Name'
+         )
+    ;    
+    return sheetList;
+  end;
+
+
+  procedure XSS_initDOMReader (
+    reader    in out nocopy t_dom_reader
+  , sheetIdx  in pls_integer
+  )
+  is
+  begin
+
+    reader.xpath := '/Workbook/Worksheet[$SHEETIDX]/Table/Row';
+    reader.xpath := replace(reader.xpath, '$SHEETIDX', to_char(sheetIdx));
+        
+    reader.rlist := dbms_xslprocessor.selectNodes(
+                      n         => dbms_xmldom.makeNode(reader.doc)
+                    , pattern   => reader.xpath
+                    , namespace => XSS_DFLT_NSMAP
+                    );
+    
+    reader.rlist_idx := 0;
+    if dbms_xmldom.isNull(reader.rlist) then
+      reader.rlist_size := 0;
+    else
+      reader.rlist_size := dbms_xmldom.getLength(reader.rlist);
+    end if;
+    
+  end;
+
+
+  procedure XSS_openNextSheet (
+    ctx  in out nocopy t_context
+  )
+  is
+    has_next  boolean := (ctx.curr_sheet < ctx.sheets.count);
+  begin
+    if ctx.curr_sheet > 0 then
+      -- free open resources
+      dbms_xmldom.freeNodeList(ctx.dom_reader.rlist);
+    end if;
+    
+    while has_next loop
+      ctx.curr_sheet := ctx.curr_sheet + 1;
+      ctx.src_row := 0;
+      ctx.row_repeat := 0;
+      ctx.tmp_row := null;
+      XSS_initDOMReader(ctx.dom_reader, ctx.sheets(ctx.curr_sheet).idx);     
+      exit when ctx.dom_reader.rlist_size != 0;
+      has_next := (ctx.curr_sheet < ctx.sheets.count);
+    end loop;
+    
+    if not has_next then
+      ctx.done := true;
+    end if;
+    
+  end;
+  
+
+  procedure XSS_openContent (
+    content      in blob
+  , sheetFilter  in anydata
+  , ctx_id       in binary_integer
+  )
+  is
+    l_content     xmltype := blob2xml(content);
+  begin
+    
+    ctx_cache(ctx_id).file_type := FILE_XSS;
+    ctx_cache(ctx_id).sheets := filterSheetList(XSS_getSheetList(l_content), sheetFilter); 
+    ctx_cache(ctx_id).dom_reader.doc := dbms_xmldom.newDOMDocument(l_content);
+    XSS_openNextSheet(ctx_cache(ctx_id));
+  
+  end;
+
+
   procedure openSpreadsheet (
     p_file      in blob
   , p_password  in varchar2
@@ -2788,7 +2886,8 @@ where t.id = :1
       end if;
       
     elsif is_xmlss(p_file) then
-      error(UNIMPLEMENTED_FEAT, 'XML Spreadsheet 2003', p_code => -20720);
+      --error(UNIMPLEMENTED_FEAT, 'XML Spreadsheet 2003', p_code => -20720);
+      XSS_openContent(p_file, p_sheet, p_ctx_id);
     else
       raise_application_error(-20720, INVALID_DOCUMENT);
     end if;
@@ -3158,6 +3257,198 @@ where t.id = :1
     -- save row repetition info across fetches
     ctx_cache(ctx_id).row_repeat := row_repeat;
     ctx_cache(ctx_id).tmp_row := tmp_row;
+      
+    return cells;
+    
+  end;
+
+
+  function getCells_XSS (
+    ctx_id  in pls_integer
+  , nrows   in number 
+  )
+  return ExcelTableCellList
+  is
+    cells        ExcelTableCellList := ExcelTableCellList();  
+    cell         ExcelTableCell := ExcelTableCell(null, null, null, null, null);
+    l_nrows      integer := nrows;
+    row_node     dbms_xmldom.DOMNode;
+    row_cnt      pls_integer;
+    row_idx      pls_integer;
+    row_num      pls_integer;
+    src_row      pls_integer;
+    
+    l_start_row  pls_integer := nvl(ctx_cache(ctx_id).def_cache.range.start_ref.r, 1);
+    l_end_row    pls_integer := ctx_cache(ctx_id).def_cache.range.end_ref.r;
+    refset       QI_column_ref_set_t := ctx_cache(ctx_id).def_cache.refSet;
+
+    str          t_string_rec;
+    info         t_cell_info;
+    node_cnt     pls_integer;
+    node_idx     pls_integer;
+    cell_nodes   dbms_xmldom.DOMNodeList;
+    cell_node    dbms_xmldom.DOMNode;
+    cell_idx     pls_integer;
+    data_node    dbms_xmldom.DOMNode;
+    
+    empty_row    boolean;
+
+    procedure read_comment (
+      cell_node  in dbms_xmldom.DOMNode
+    , sheet_idx  in pls_integer
+    , cell_ref   in varchar2
+    )
+    is
+      str  t_string_rec;
+    begin
+      str.strval := dbms_xslprocessor.valueOf(cell_node, 'Comment/Data', XSS_DFLT_NSMAP);
+      if str.strval is not null then
+        ctx_cache(ctx_id).comments(sheet_idx)(cell_ref) := str.strval;
+      end if;
+    end;
+
+  begin
+
+    row_cnt := ctx_cache(ctx_id).dom_reader.rlist_size;
+    row_idx := ctx_cache(ctx_id).dom_reader.rlist_idx;
+    src_row := ctx_cache(ctx_id).src_row;
+    cell.sheetIdx := ctx_cache(ctx_id).curr_sheet;
+      
+    loop
+          
+      src_row := src_row + 1;
+      cell.cellRow := src_row;
+      
+      row_node := dbms_xmldom.item(ctx_cache(ctx_id).dom_reader.rlist, row_idx);
+      row_idx := row_idx + 1;
+      
+      -- read row index
+      src_row := nvl(dbms_xslprocessor.valueOf(row_node, '@ss:Index', XSS_SS_NSMAP), src_row);
+           
+      -- read cell nodes if within the requested range
+      if src_row >= l_start_row then
+        
+        empty_row := true;
+        cell_nodes := dbms_xslprocessor.selectNodes(row_node, 'Cell', XSS_DFLT_NSMAP);
+        node_cnt := dbms_xmldom.getLength(cell_nodes);
+        node_idx := 0;
+        cell_idx := 1;
+            
+        while node_idx < node_cnt loop
+          
+          str := null;
+                  
+          cell_node := dbms_xmldom.item(cell_nodes, node_idx);
+          node_idx := node_idx + 1;
+          
+          -- read cell index
+          cell_idx := nvl(dbms_xslprocessor.valueOf(cell_node, '@ss:Index', XSS_SS_NSMAP), cell_idx);
+          cell.cellCol := base26encode(cell_idx);
+          
+          -- read cell data
+          cell.cellData := null;
+          data_node := dbms_xslprocessor.selectSingleNode(cell_node, 'Data', XSS_DFLT_NSMAP);
+          
+          if not dbms_xmldom.isNull(data_node) then
+            -- type
+            info.cellType := dbms_xslprocessor.valueOf(data_node, '@ss:Type', XSS_SS_NSMAP);
+            -- value      
+            case info.cellType
+            when 'Number' then
+              str.strval := dbms_xslprocessor.valueOf(data_node, '.');
+              cell.cellData := anydata.ConvertNumber(to_number(replace(str.strval,'.',get_decimal_sep)));
+                    
+            when 'String' then
+              begin
+                str.strval := dbms_xslprocessor.valueOf(data_node, '.');
+              exception
+                when value_error or buffer_too_small then
+                  readclob(
+                    dbms_xslprocessor.selectNodes(data_node, './/text()')
+                  , str.lobval
+                  );
+              end;
+                    
+              if str.lobval is not null then
+                cell.cellData := anydata.ConvertClob(str.lobval);
+              else
+                --cell.cellData := anydata.ConvertVarchar2(str.strval);
+                if lengthb(str.strval) <= MAX_STRING_SIZE then
+                  cell.cellData := anydata.ConvertVarchar2(str.strval);
+                else
+                  cell.cellData := anydata.ConvertClob(to_clob(str.strval));
+                end if;
+              end if;
+                  
+            when 'DateTime' then
+              str.strval := dbms_xslprocessor.valueOf(data_node, '.');
+              cell.cellData := anydata.ConvertTimestamp(to_timestamp(str.strval,'YYYY-MM-DD"T"HH24:MI:SS.FF9'));
+              
+            when 'Boolean' then
+              str.strval := dbms_xslprocessor.valueOf(data_node, '.');
+              cell.cellData := anydata.ConvertVarchar2(case when str.strval = '1' then 'TRUE' else 'FALSE' end);
+              
+            when 'Error' then
+              cell.cellData := anydata.ConvertVarchar2(dbms_xslprocessor.valueOf(data_node, '.'));
+                  
+            else
+              null;
+              
+            end case;
+            
+            dbms_xmldom.freeNode(data_node);
+          
+          end if;
+                
+          -- need comment?
+          if refset.exists(cell.cellCol) then
+            if bitand(refSet(cell.cellCol), META_COMMENT) != 0 then
+              read_comment(cell_node, cell.sheetIdx, cell.cellCol || cell.cellRow);
+            end if;
+          end if;
+              
+          dbms_xmldom.freeNode(cell_node);
+            
+          if cell.cellData is not null then             
+            if refset.exists(cell.cellCol) then
+              cells.extend;
+              cells(cells.last) := cell;
+              empty_row := false;
+            end if;
+          end if;
+            
+          cell_idx := cell_idx + 1;
+              
+        end loop;
+            
+        dbms_xmldom.freeNodeList(cell_nodes);
+        dbms_xmldom.freeNode(row_node);
+          
+        if not empty_row then
+          l_nrows := l_nrows - 1;
+        end if;
+                   
+      end if;
+        
+      -- no more row to read?
+      if row_idx = row_cnt or src_row = l_end_row then 
+        --ctx_cache(ctx_id).done := true;
+        XSS_openNextSheet(ctx_cache(ctx_id));
+
+        row_cnt := ctx_cache(ctx_id).dom_reader.rlist_size;
+        row_idx := ctx_cache(ctx_id).dom_reader.rlist_idx;
+        src_row := ctx_cache(ctx_id).src_row;
+        cell.sheetIdx := ctx_cache(ctx_id).curr_sheet;
+
+      end if;
+      
+      exit when ctx_cache(ctx_id).done or l_nrows = 0;
+
+    end loop;
+      
+    ctx_cache(ctx_id).dom_reader.rlist_idx := row_idx;
+    ctx_cache(ctx_id).r_num := row_num;
+    ctx_cache(ctx_id).src_row := src_row;
       
     return cells;
     
@@ -3604,6 +3895,8 @@ where t.id = :1
         cells := xutl_xlsb.iterate_context(extern_key, l_nrows);
       when FILE_ODS then
         cells := getCells_ODS(ctx_id, l_nrows);
+      when FILE_XSS then
+        cells := getCells_XSS(ctx_id, l_nrows);
       end case;
       
       if cells is not null and cells is not empty then
@@ -3679,7 +3972,10 @@ where t.id = :1
     
     when FILE_ODS then
       
-      --dbms_xmldom.freeNodeList(ctx_cache(p_ctx_id).dom_reader.rlist);
+      dbms_xmldom.freeDocument(ctx_cache(p_ctx_id).dom_reader.doc);
+
+    when FILE_XSS then
+    
       dbms_xmldom.freeDocument(ctx_cache(p_ctx_id).dom_reader.doc);
     
     end case;
