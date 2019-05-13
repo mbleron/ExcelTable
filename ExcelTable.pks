@@ -50,6 +50,9 @@ create or replace package ExcelTable is
     Marc Bleron       2018-11-02     Added multi-sheet support
     Marc Bleron       2019-03-31     Added default value feature to DML API
     Marc Bleron       2019-04-02     Added support for XML spreasheetML files
+    Marc Bleron       2019-05-12     Fix : requested rows count wrongly decremented for 
+                                           empty row
+                                     Fix : getCursor() failure with multi-sheet support
 ====================================================================================== */
 
   -- Read methods  

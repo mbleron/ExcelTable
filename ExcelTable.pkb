@@ -2910,6 +2910,7 @@ where t.id = :1
     cell_nodes  dbms_xmldom.DOMNodeList;
     cell_node   dbms_xmldom.DOMNode;
     str         t_string_rec;
+    empty_row   boolean;
     
   begin
 
@@ -2917,6 +2918,7 @@ where t.id = :1
 
     loop
         
+      empty_row := true;
       row_node := dbms_xmldom.item(ctx_cache(ctx_id).dom_reader.rlist, ctx_cache(ctx_id).dom_reader.rlist_idx);
       ctx_cache(ctx_id).dom_reader.rlist_idx := ctx_cache(ctx_id).dom_reader.rlist_idx + 1;
       
@@ -2989,10 +2991,10 @@ where t.id = :1
           elsif str.lobval is not null then
             cell.cellData := anydata.ConvertClob(str.lobval);
           end if;
-          --if info.cellType is null and info.cellValue is null
+          
           cells.extend;
           cells(cells.last) := cell;
-             
+          empty_row := false;
           
         end if;
         
@@ -3008,8 +3010,10 @@ where t.id = :1
         OX_openNextSheet(ctx_cache(ctx_id));       
         cell.sheetIdx := ctx_cache(ctx_id).curr_sheet;
       end if;
-          
-      l_nrows := l_nrows - 1;
+      
+      if not empty_row then
+        l_nrows := l_nrows - 1;
+      end if;
               
       exit when ctx_cache(ctx_id).done or l_nrows = 0;
 
@@ -3872,6 +3876,8 @@ where t.id = :1
 
   begin
     
+    debug('Requested rows = '||to_char(nrows));
+   
     if not ctx_cache(ctx_id).done then
        
       cols := ctx_cache(ctx_id).def_cache.cols;
@@ -3952,7 +3958,6 @@ where t.id = :1
       when STREAM_READ then
         
         StAX_closeContext(ctx_cache(p_ctx_id).extern_key);
-        --dbms_lob.freetemporary(ctx_cache(p_ctx_id).ws_content);
         
       when STREAM_READ_XDB then
         
@@ -3968,7 +3973,6 @@ where t.id = :1
     when FILE_XLSB then
       
       xutl_xlsb.free_context(ctx_cache(p_ctx_id).extern_key);
-      --dbms_lob.freetemporary(ctx_cache(p_ctx_id).ws_content);
     
     when FILE_ODS then
       
@@ -4011,17 +4015,59 @@ where t.id = :1
 
 
   function getCursorQuery (
-    p_cols  in varchar2
-  , p_range in varchar2   
+    p_sheetFilter in anydata
+  , p_cols        in varchar2
+  , p_range       in varchar2 
   )
   return varchar2
   is
-    l_query  varchar2(4000) :=
-    'SELECT * FROM TABLE(EXCELTABLE.GETROWS(:1,:2,''$$COLS'',''$$RANGE'',:3,:4))';
+    query  varchar2(32767) := 
+    'SELECT * FROM TABLE(EXCELTABLE.GETROWS(:1,$$SHEETFILTER,$$COLS,''$$RANGE'',:2,:3))';
+    
+    sheetFilterType  varchar2(257) := p_sheetFilter.GetTypeName();
+    sheetFilterText  varchar2(32767);
+    dummy            pls_integer;
+    inputSheetList   ExcelTableSheetList;
+    
+    function to_string_literal (str in varchar2) return varchar2 is
+    begin
+      return '''' || replace(str, '''', '''''') || '''';
+    end;
+  
   begin
-    l_query := replace(l_query, '$$COLS', replace(p_cols, '''', ''''''));
-    l_query := replace(l_query, '$$RANGE', p_range);
-    return l_query;
+    
+    -- Multi-sheet support : sheetFilter parameter now needs to be hardcoded in order to
+    -- avoid error "PLS-00307: too many declarations of 'ODCITABLEDESCRIBE' match this call" 
+    case
+    when sheetFilterType = 'SYS.VARCHAR2' then
+      
+      sheetFilterText := to_string_literal(p_sheetFilter.AccessVarchar2());
+      
+    when sheetFilterType like '%.EXCELTABLESHEETLIST' then
+      
+      dummy := p_sheetFilter.GetCollection(inputSheetList);
+      
+      sheetFilterText := 'EXCELTABLESHEETLIST(';
+      if inputSheetList is not null then
+        for i in 1 .. inputSheetList.count loop
+          if i > 1 then
+            sheetFilterText := sheetFilterText || ',';
+          end if;
+          sheetFilterText := sheetFilterText || to_string_literal(inputSheetList(i));
+        end loop;
+      end if;
+      sheetFilterText := sheetFilterText || ')';
+      
+    end case;
+  
+    query := replace(query, '$$SHEETFILTER', sheetFilterText);
+    query := replace(query, '$$COLS', to_string_literal(p_cols));
+    query := replace(query, '$$RANGE', p_range);
+    
+    debug(query);
+    
+    return query;
+    
   end;
   
   
@@ -4036,9 +4082,9 @@ where t.id = :1
   return sys_refcursor
   is
     l_rc     sys_refcursor;
-    l_query  varchar2(32767) := getCursorQuery(p_cols, p_range);
+    l_query  varchar2(32767) := getCursorQuery(anydata.ConvertVarchar2(p_sheet), p_cols, p_range);
   begin
-    open l_rc for l_query using p_file, p_sheet, p_method, p_password;
+    open l_rc for l_query using p_file, p_method, p_password;
     return l_rc;
   end;
 
@@ -4054,9 +4100,9 @@ where t.id = :1
   return sys_refcursor
   is
     l_rc     sys_refcursor;
-    l_query  varchar2(32767) := getCursorQuery(p_cols, p_range);
+    l_query  varchar2(32767) := getCursorQuery(anydata.ConvertCollection(p_sheets), p_cols, p_range);
   begin
-    open l_rc for l_query using p_file, p_sheets, p_method, p_password;
+    open l_rc for l_query using p_file, p_method, p_password;
     return l_rc;
   end;
 

@@ -296,7 +296,7 @@ Parameter|Description|Mandatory
 `p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
 `p_col_name`|Column name from the target table.|Yes
 `p_col_ref`|Column reference : A, B, C etc. <br/>If set to NULL, the target column will be loaded with the default value `p_default`.|No
-`p_format`|Date or timestamp format mask, same as `p_format` argument of [getRows](#getrows-function) function.|No
+`p_format`|Date or timestamp format mask, same as `FORMAT` clause in the [column list](#columns-syntax-specification) of [getRows](#getrows-function) function.|No
 `p_meta`|Metadata clause. <br/>One of `META_ORDINALITY`, `META_COMMENT`, `META_SHEET_NAME`, or `META_SHEET_INDEX`, same as `FOR ORDINALITY` and `FOR METADATA` clauses in the [column list](#columns-syntax-specification).|No
 `p_key`|Marks this column as a key of the input data set. <br/>At least one column must be marked as key in an UPDATE, MERGE or DELETE context.|No
 `p_default`|Default column value, as an ANYDATA instance. <br/>The target column will be loaded with the default value if the source column is NULL, or the column reference `p_col_ref` is NULL.|No
@@ -951,6 +951,10 @@ end;
 ```
 
 ## CHANGELOG
+### 3.2.1 (2019-05-14)
+* Fix : requested rows count wrongly decremented for empty row
+* Fix : getCursor() failure with multi-sheet support
+
 ### 3.2 (2019-05-01)
 * Added support for XML spreadsheetML files (.xml)
 
