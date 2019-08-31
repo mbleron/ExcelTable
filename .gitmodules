@@ -1,0 +1,3 @@
+[submodule "MSUtilities"]
+	path = MSUtilities
+	url = https://github.com/mbleron/MSUtilities.git
