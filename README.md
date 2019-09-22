@@ -1,18 +1,22 @@
 
-# ExcelTable - An Oracle SQL Interface for MS Excel and ODF Spreadsheet Files
+# ExcelTable - An Oracle SQL Interface for MS Excel, ODF Spreadsheet and Flat Files
 
-ExcelTable is a pipelined table interface to read an Excel file (.xlsx, .xlsm, .xlsb, .xls, .xml), or ODF spreadsheet file (.ods) as if it were an external table.  
+ExcelTable is a pipelined table interface to read Excel files (.xlsx, .xlsm, .xlsb, .xls, .xml), ODF spreadsheet files (.ods), and flat files (delimited or positional) as if they were external tables.  
 It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
 
 ## Content
 * [What's New in...](#whats-new-in)  
 * [Bug tracker](#bug-tracker)  
 * [Installation](#installation)  
+* [Quick Start](#quick-start)
 * [ExcelTable Subprograms and Usage](#exceltable-subprograms-and-usage)  
 * [CHANGELOG](#changelog)  
 
 
 ## What's New in...
+> Version 4.0 : 
+> Support for delimited and positional flat files
+
 > Version 3.2 : 
 > ExcelTable can read XML spreadsheetML files (.xml)
 
@@ -35,10 +39,21 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 
 ## Bug tracker
 
-Found bugs? I'm sure there are...  
+Found a bug, have a question, or an enhancement request?  
 Please create an issue [here](https://github.com/mbleron/ExcelTable/issues).
 
 ## Installation
+
+### Getting source code
+
+Clone this repository or download it as a zip archive.
+
+[MSUtilities](https://github.com/mbleron/MSUtilities) dependency is now provided as a submodule.
+
+* If you choose to clone the repository, use the following command to fetch the submodule automatically :  
+`git clone --recurse-submodules https://github.com/mbleron/ExcelTable.git`  
+
+* If you go the download way, please also get [MSUtilities](https://github.com/mbleron/MSUtilities) zip archive and extract the content of the root folder into MSUtilities folder.
 
 ### Database requirement
 
@@ -62,33 +77,7 @@ grant execute on sys.dbms_crypto to <user>;
 
 ### PL/SQL
 
-Create the following objects, in this order : 
-
-> As of version 2.0, the following packages are now **mandatory** dependencies :  
-> [XUTL_CDF](https://github.com/mbleron/MSUtilities/tree/master/CDFReader) : CFBF (OLE2) file reader  
-> [XUTL_OFFCRYPTO](https://github.com/mbleron/MSUtilities/tree/master/OfficeCrypto) : Office crypto routines  
-> XUTL_XLS for reading .xls files
-
-```
-@xutl_cdf.pks
-@xutl_cdf.pkb
-@xutl_offcrypto.pks
-@xutl_offcrypto.pkb
-```
-
-```
-@ExcelTableSheetList.tps
-@ExcelTableCell.tps
-@ExcelTableCellList.tps
-@xutl_xls.pks
-@xutl_xls.pkb
-@xutl_xlsb.pks
-@xutl_xlsb.pkb
-@ExcelTableImpl.tps
-@ExcelTable.pks
-@ExcelTable.pkb
-@ExcelTableImpl.tpb
-```
+Using SQL*Plus, connect to the target database schema and run script [`install.sql`](./install.sql).
 
 
 ### Java
@@ -102,30 +91,89 @@ JAR files to deploy depend on the database version :
 
 * Versions < 11\.2\.0\.4  
 Except for version 11\.2\.0\.4 which supports JDK 6, Oracle 11g only supports JDK 5 (Java 1.5).
-Load the following jar files in order to use the streaming method : 
+The following jar files are required in order to use the streaming method : 
   + [stax-api-1.0-2.jar](./java/lib/stax-api-1.0-2.jar)  
   + [sjsxp-1.0.2.jar](./java/lib/sjsxp-1.0.2.jar)  
   + [exceldbtools-1.5.jar](./java/lib/exceldbtools-1.5.jar)
 
-```
-loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/stax-api-1.0-2.jar
-loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/sjsxp-1.0.2.jar
-loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.5.jar
-```
-
+Run shell script [`install_jdk5.bat`](./java/install_jdk5.bat) on Windows, or [`install_jdk5.sh`](./java/install_jdk5.sh) on a UNIX-like machine to load them in the database.  
+You will be prompted for connect information : database SID, user and password.
 
 * Versions >= 11\.2\.0\.4  
-The StAX API is included in JDK 6, as well as the Sun Java implementation (SJXSP), so for those versions one only needs to load the following jar file :  
+The StAX API is included in JDK 6, as well as the Sun Java implementation (SJXSP), so for those versions one only needs the following jar file :  
   + [exceldbtools-1.6.jar](./java/lib/exceldbtools-1.6.jar)
 
+Run shell script [`install_jdk6.bat`](./java/install_jdk6.bat) (or [`install_jdk6.sh`](./java/install_jdk6.sh)) to load it in the database.
+
+Both scripts use `loadjava` utility, available from a standard Oracle client or database installation ($ORACLE_HOME/bin).  
+It is recommended to use a client version at least equal to the target database version to avoid compatibility issues.
+
+
+## Quick Start
+
+Reading an Excel file using default settings : 
+```sql
+SELECT t.* 
+FROM Table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('MY_DIR','my_file.xlsx')
+       , 'my_sheet'
+       , ' "COL1"  number
+         , "COL2"  varchar2(10)
+         , "COL3"  number
+         , "COL4"  date
+         , "COL5"  number(3)'
+       )
+     ) t
+;
 ```
-loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
+Reading a delimited flat file (e.g. csv) : 
+```sql
+SELECT t.* 
+FROM Table(
+       ExcelTable.getRows(
+         p_file => ExcelTable.getTextFile('MY_DIR','my_file.csv')
+       , p_cols => q'{
+                     "COL1" number
+                   , "COL2" varchar2(50)
+                   , "COL3" varchar2(50)
+                   , "COL4" number
+                   , "COL5" date format 'DD/MM/YYYY HH24:MI:SS'
+                   , "COL6" timestamp(6) format 'DD-MON-YYYY HH.MI.SS.FF9 AM'
+                   }'
+       , p_skip => 0
+       , p_line_term => chr(10)
+       , p_field_sep => ','
+       )
+     ) t
+;
 ```
+Reading a positional flat file : 
+```sql
+SELECT t.* 
+FROM Table(
+       ExcelTable.getRows(
+         p_file => ExcelTable.getTextFile('MY_DIR','my_file.dat')
+       , p_cols => q'{
+                     "COL1" number(4)     position(1:4)
+                   , "COL2" varchar2(10)  position(5:14)
+                   , "COL3" varchar2(9)   position(15:23)
+                   , "COL4" number(4)     position(24:27)
+                   , "COL5" date format 'DD/MM/YYYY'  position(28:37)
+                   }'
+       , p_skip => 0
+       , p_line_term => chr(10)
+       )
+     ) t
+;
+```
+See the following sections for more examples and detailed description of ExcelTable features.
 
 ## ExcelTable Subprograms and Usage
 
 * [getRows](#getrows-function)  
 * [getFile](#getfile-function)
+* [getTextFile](#gettextfile-function)
 * [setFetchSize](#setfetchsize-procedure)  
 * [useSheetPattern](#usesheetpattern-procedure)  
 * [getCursor](#getcursor-function)  
@@ -136,8 +184,10 @@ loadjava -u user/passwd@sid -r -v -jarsasdbobjects java/lib/exceldbtools-1.6.jar
 ---
 
 ### getRows Function
-This is the main function of ExcelTable. It returns a set of rows from the input spreadsheet file, based on the sheet(s), range and projection defined in the parameters.  
-As of ExcelTable 3.0, the function is overloaded to accept both a single sheet name (as a regex pattern), or a sheet list. 
+This is the main function of ExcelTable. It returns a set of rows from the input file, based on the sheet(s), range and projection defined in the parameters.  
+The function is available as three overloads : 
+* Overloads #1 and #2 are dedicated to spreadsheet files, and accept a single sheet name (as a regex pattern), or a sheet list.  
+* Overload #3 is used to read delimited or positional flat files.
 
 **Overload 1**
 ```sql
@@ -165,16 +215,33 @@ function getRows (
 return anydataset pipelined
 using ExcelTableImpl;
 ```
+**Overload 3**
+```sql
+function getRows (
+  p_file      in clob
+, p_cols      in varchar2
+, p_skip      in pls_integer
+, p_line_term in varchar2
+, p_field_sep in varchar2 default null
+, p_text_qual in varchar2 default null
+) 
+return anydataset pipelined
+using ExcelTableImpl;
+```
 
 Parameter|Description|Mandatory
 ---|---|---
-`p_file`|Input spreadsheet file (.xlsx, .xlsm, .xlsb, .xls, .xml or .ods format), as a BLOB. <br/>A helper function [getFile()](#getfile-function) is available to directly reference the file from a directory.|Yes
-`p_sheet`|Sheet name. <br/>This parameter is interpreted as a regular expression pattern, if the feature has been enabled via [useSheetPattern](#usesheetpattern-procedure) procedure (see note below).|Yes
-`p_sheets`|Sheet list, of `ExcelTableSheetList` data type. <br/>Provides a list of sheet names, e.g. `ExcelTableSheetList('Sheet1','Sheet2','Sheet3')`|Yes
+`p_file`|Input spreadsheet file (.xlsx, .xlsm, .xlsb, .xls, .xml or .ods format) as a BLOB, or flat file, as a CLOB. <br/>Helper functions [getFile()](#getfile-function) and [getTextFile()](#gettextfile-function) are available to directly reference the file from a directory.|Yes
+`p_sheet`|___Spreadsheet only___ <br/>Sheet name. <br/>This parameter is interpreted as a regular expression pattern, if the feature has been enabled via [useSheetPattern](#usesheetpattern-procedure) procedure (see note below).|Yes
+`p_sheets`|___Spreadsheet only___ <br/>Sheet list, of `ExcelTableSheetList` data type. <br/>Provides a list of sheet names, e.g. `ExcelTableSheetList('Sheet1','Sheet2','Sheet3')`|Yes
 `p_cols`|Column list (see [specs](#columns-syntax-specification) below)|Yes
-`p_range`|Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)|No
-`p_method`|Read method. <br/>`DOM_READ` : 0 (default value), or `STREAM_READ` : 1. <br/>This parameter is ignored if the file is not a .xlsx or .xlsm file.|No
-`p_password`|Password used to encrypt the spreadsheet document.|No
+`p_range`|___Spreadsheet only___ <br/>Excel-like range expression that defines the table boundaries in the worksheet (see [specs](#range-syntax-specification) below)|No
+`p_method`|___Spreadsheet only___ <br/>Read method. <br/>`DOM_READ` : 0 (default value), or `STREAM_READ` : 1. <br/>This parameter is ignored if the file is not a .xlsx or .xlsm file.|No
+`p_password`|___Spreadsheet only___ <br/>Password used to encrypt the spreadsheet document.|No
+`p_skip`|___Flat file only___ <br/>Number of line(s) to skip from the beginning of the file. <br/>For technical reasons, this parameter is mandatory, so set it explicitly to 0 by default if no line has to be skipped.|Yes
+`p_line_term`|___Flat file only___ <br/>Line terminator. At most two characters are allowed for this parameter, typically \<LF> or \<CR>\<LF>.|Yes
+`p_field_sep`|___Flat file only___ <br/>Field separator. Must be exactly one character. <br/>Mandatory for delimited flat files|No
+`p_text_qual`|___Flat file only___ <br/>Text qualifier. Must be exactly one character, typically " (QUOTATION MARK) or ' (APOSTROPHE). <br/>Line terminators and field separators occurring in fields enclosed by this character won't be interpreted.|No
 
 **Note :**  
 As of ExcelTable 3.0, `p_sheet` parameter can accept a regex pattern in order to reference multiple sheets, e.g. `'^Sheet[1-3]'`.  
@@ -202,6 +269,28 @@ Parameter|Description|Mandatory
 
 **Note :**  
 As of Oracle 12.2, getFile() may be replaced by the built-in [TO_BLOB(_bfile_)](https://docs.oracle.com/en/database/oracle/oracle-database/12.2/sqlrf/TO_BLOB-bfile.html) SQL function.
+
+---
+### getTextFile function
+Loads a (text) file from a directory, as a temporary CLOB. 
+
+```sql
+function getTextFile (
+  p_directory in varchar2
+, p_filename  in varchar2
+, p_charset   in varchar2 default 'CHAR_CS'
+) 
+return clob;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_directory`|Directory name.|Yes
+`p_filename`|Input file name.|Yes
+`p_charset`|Character set (encoding) of the input file. By default, the database character set is assumed.|No
+
+**Note :**  
+As of Oracle 12.2, getTextFile() may be replaced by the built-in [TO_CLOB(_bfile_)](https://docs.oracle.com/en/database/oracle/oracle-database/12.2/sqlrf/TO_CLOB-bfile-blob.html) SQL function.
 
 ---
 ### setFetchSize procedure
@@ -244,8 +333,19 @@ function getCursor (
 )
 return sys_refcursor;
 ```
-getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by an equivalent [getRows](#getrows-function) call.  
-It may be useful in PL/SQL code where static reference to table function returning ANYDATASET is not supported.  
+```sql
+function getCursor (
+  p_file      in clob
+, p_cols      in varchar2
+, p_skip      in pls_integer
+, p_line_term in varchar2
+, p_field_sep in varchar2 default null
+, p_text_qual in varchar2 default null    
+)
+return sys_refcursor;
+```
+getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by the equivalent [getRows](#getrows-function) call.  
+It may be useful in PL/SQL code (prior 18c) where static reference to table function returning ANYDATASET is not supported.  
 
 ---
 ### DML API
@@ -295,7 +395,7 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
 `p_col_name`|Column name from the target table.|Yes
-`p_col_ref`|Column reference : A, B, C etc. <br/>If set to NULL, the target column will be loaded with the default value `p_default`.|No
+`p_col_ref`|Column reference (A, B, C, ...), or field position reference (start:end).<br/>If set to NULL, the target column will be loaded with the default value `p_default`.|No
 `p_format`|Date or timestamp format mask, same as `FORMAT` clause in the [column list](#columns-syntax-specification) of [getRows](#getrows-function) function.|No
 `p_meta`|Metadata clause. <br/>One of `META_ORDINALITY`, `META_COMMENT`, `META_SHEET_NAME`, or `META_SHEET_INDEX`, same as `FOR ORDINALITY` and `FOR METADATA` clauses in the [column list](#columns-syntax-specification).|No
 `p_key`|Marks this column as a key of the input data set. <br/>At least one column must be marked as key in an UPDATE, MERGE or DELETE context.|No
@@ -394,6 +494,19 @@ function loadData (
 )
 return integer;
 ```
+```
+function loadData (
+  p_ctx        in DMLContext 
+, p_file       in clob
+, p_skip       in pls_integer
+, p_line_term  in varchar2
+, p_field_sep  in varchar2 default null
+, p_text_qual  in varchar2 default null
+, p_dml_type   in pls_integer default DML_INSERT
+, p_err_log    in varchar2 default null
+)
+return integer;
+```
 loadData() executes the data loading operation into the target table, using the mode specified by the `p_dml_type` argument.  
 An optional error logging clause is available.
 
@@ -406,6 +519,10 @@ Parameter|Description|Mandatory
 `p_range`|Cf. [getRows](getrows-function) function|No
 `p_method`|Cf. [getRows](getrows-function) function|No
 `p_password`|Cf. [getRows](getrows-function) function|No
+`p_skip`|Cf. [getRows](getrows-function) function|Yes
+`p_line_term`|Cf. [getRows](getrows-function) function|Yes
+`p_field_sep`|Cf. [getRows](getrows-function) function|No
+`p_text_qual`|Cf. [getRows](getrows-function) function|No
 `p_dml_type`|DML context type, one of `DML_INSERT`, `DML_UPDATE`, `DML_MERGE` or `DML_DELETE`. Default is DML_INSERT.|No
 `p_err_log`|A text-literal [DML error logging](https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423) clause, to capture exceptions during load.|No
 
@@ -438,13 +555,15 @@ end;
 #### Columns syntax specification
 
 
-![Column expression syntax diagram](./resources/diagram_column_expr-900.png "Column expression syntax diagram")
+![Column expression syntax diagram](./resources/diagram_column_expr.png "Column expression syntax diagram")
+
+_Ref_clause::=_  
+
+![Column reference syntax diagram](./resources/diagram_column_ref.png "Column reference syntax diagram")
 
 _Metadata_clause::=_  
 
-
-
-![Column metadata syntax diagram](./resources/diagram_column_metadata-500.png "Column metadata syntax diagram")
+![Column metadata syntax diagram](./resources/diagram_column_metadata.png "Column metadata syntax diagram")
 
 
 Column names must be declared using a quoted identifier.
@@ -463,9 +582,10 @@ Supported data types are :
 
 A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE's one) is also available to autogenerate a sequence number.
 
-Each column definition (except for the one qualified with FOR ORDINALITY) may be complemented with an optional "COLUMN" clause to explicitly target a named column in the spreadsheet, instead of relying on the order of the declarations (relative to the range).
-Positional and named column definitions cannot be mixed.
- 
+The reference clause is optional and consists in either : 
+* a column reference to explicitly target a named column in the spreadsheet (or delimited flat file), instead of relying on the declaration order (relative to the range). Positional and named column definitions cannot be mixed.
+* a field position reference (for positional flat files) specifying start and end offsets of the field in a row of data. Offsets are 1-based and must be specified in character unit.
+
 ExcelTable can also extract additional cell and sheet metadata via the `FOR METADATA ()` clause, and project them as regular columns.  
 Available metadata are :  
 * Cell comment : `FOR METADATA (COMMENT)`  
@@ -494,8 +614,16 @@ Examples :
 ```
 
 ```
-"SPARE2"         varchar2(30)   column 'F'
-"SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
+  "SPARE2"         varchar2(30)   column 'F'
+, "SPARE2_COMMENT" varchar2(2000) column 'F' for metadata (comment)
+```
+
+```
+  "C1" number(4)     position(1:4)
+, "C2" varchar2(10)  position(5:14)
+, "C3" varchar2(9)   position(15:23)
+, "C4" number(4)     position(24:27)
+, "C5" date format 'DD/MM/YYYY'  position(28:37)
 ```
 
 ## 
@@ -950,7 +1078,88 @@ end;
 /
 ```
 
+* Reading a delimited flat file ([test_8k.csv](./samples/test_8k.csv))
+```sql
+select * 
+from table(
+       ExcelTable.getRows(
+         p_file => ExcelTable.getTextFile('XL_DATA_DIR','test_8k.csv')
+       , p_cols => q'{
+                     "C1"  number
+                   , "C2"  varchar2(50)
+                   , "C3"  varchar2(50)
+                   , "C4"  number
+                   , "C5"  date format 'DD/MM/YYYY HH24:MI:SS'
+                   , "C6"  date format 'DD/MM/YYYY HH24:MI:SS'
+                   , "C7"  timestamp(6) format 'DD-MON-YYYY HH.MI.SS.FF9 AM'
+                   , "C8"  varchar2(10)
+                   , "C9"  varchar2(10)
+                   , "C10" varchar2(1000) 
+                   }'
+       , p_skip => 0
+       , p_line_term => chr(13)||chr(10)
+       , p_field_sep => ';'
+       , p_text_qual => '"'
+       )
+     )
+;
+```
+
+* Reading an inline delimited string
+```sql
+select * 
+from table(
+       ExcelTable.getRows(
+         p_file => '1;val1|2;val2|3;val3|4;val4|5;val5|6;val6|7;val7|8;val8'
+       , p_cols => '"C1" number, "C2" varchar2(10)'
+       , p_skip => 0
+       , p_line_term => '|'
+       , p_field_sep => ';'
+       )
+     )
+;
+
+        C1 C2
+---------- ----------
+         1 val1
+         2 val2
+         3 val3
+         4 val4
+         5 val5
+         6 val6
+         7 val7
+         8 val8
+ 
+```
+
+* Reading a positional flat file ([test_pos_8k.dat](./samples/test_pos_8k.dat))
+```sql
+select * 
+from table(
+       exceltable.getRows(
+         p_file => exceltable.getTextFile('XL_DATA_DIR','test_pos_8k.dat')
+       , p_cols => q'{
+                     "OBJECT_ID"    number(5)     position(1:5)
+                   , "OWNER"        varchar2(30)  position(6:35)
+                   , "OBJECT_NAME"  varchar2(128) position(36:163)
+                   , "OBJECT_TYPE"  varchar2(23)  position(164:186)
+                   , "CREATED"      timestamp(3) format 'YYYYMMDDHH24MISSFF3' position(187:203)
+                   , "STR1"         varchar2(100) position(204:303)
+                   , "NUM1"         number        position(304:314)
+                   }'
+       , p_skip => 0
+       , p_line_term => chr(13)||chr(10)
+       )
+     )
+;
+```
+
 ## CHANGELOG
+### 4.0 (2019-09-22)
+* Added support for delimited and positional flat files
+* Fix : issue #12
+* Fix : issue #13
+
 ### 3.2.1 (2019-05-14)
 * Fix : requested rows count wrongly decremented for empty row
 * Fix : getCursor() failure with multi-sheet support
