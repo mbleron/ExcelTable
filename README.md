@@ -1155,6 +1155,11 @@ from table(
 ```
 
 ## CHANGELOG
+
+### 4.0.1 (2019-09-29)
+* Fix : issue #14
+* Enhancement : issue #15
+
 ### 4.0 (2019-09-22)
 * Added support for delimited and positional flat files
 * Fix : issue #12
