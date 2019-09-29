@@ -442,9 +442,13 @@ create or replace package body ExcelTable is
     end;
     
   begin
-    position_list := make_range(1);
-    for i in 2 .. cols.count loop
-      position_list := position_list || ',' || make_range(i);
+    for i in 1 .. cols.count loop
+      if not cols(i).for_ordinality then
+        if position_list is not null then
+          position_list := position_list || ',';
+        end if;
+        position_list := position_list || make_range(i);
+      end if;
     end loop;
     return position_list;
   end;
@@ -1412,7 +1416,6 @@ create or replace package body ExcelTable is
       
       elsif pos < end_col and cell_meta != META_CONSTANT then 
         tdef.cols(i).metadata.col_ref := base26encode(start_col + pos);
-        --dbms_output.put_line(tdef.cols(i).metadata.col_ref);
         pos := pos + 1;
         
       elsif cell_meta = META_CONSTANT then
@@ -3813,7 +3816,6 @@ where t.id = :1
           l_nrows := l_nrows - 1;
           if l_nrows = 0 then
             -- save current cell info
-            --dbms_output.put_line('Saved cell = '||info.CellRef);
             ctx_cache(ctx_id).xdb_reader.cell_info := info;
             exit;
           end if;

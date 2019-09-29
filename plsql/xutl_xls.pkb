@@ -129,6 +129,7 @@ create or replace package body xutl_xls is
     pos     integer
   , dbRtrw  binary_integer
   , rgdb    Int16_Array_T
+  , prev_pos integer
   );
   
   type DBCellArray_T is table of DBCell_T;
@@ -165,9 +166,6 @@ create or replace package body xutl_xls is
     sheets    BoundSheetList_T
   , sheetMap  SheetMap_T
   , sst       SST_T
-  --, idx       Index_T
-  --, txtMap    TxOMap_T   
-  --, comments  ExcelTableCellList
   );
   
   type RK_T is record (
@@ -228,6 +226,7 @@ create or replace package body xutl_xls is
     recordTypeMap(raw2int(RT_TXO)) := 'TxO';
     recordTypeMap(raw2int(RT_CONTINUE)) := 'Continue';
     recordTypeMap(raw2int(RT_STRING)) := 'String';
+    recordTypeMap(raw2int(RT_DBCELL)) := 'DBCell';
   end;
 
   procedure set_debug (p_mode in boolean)
@@ -263,6 +262,16 @@ create or replace package body xutl_xls is
   is
   begin
     if stream.rec.rt != rt then
+      debug(
+        utl_lms.format_message(
+          'Unexpected record found at position %d [0x%s] : 0x%s instead of 0x%s (%s)'
+        , to_char(stream.rec.current)
+        , to_char(stream.rec.current, 'FM0XXXXXXX')
+        , rawtohex(stream.rec.rt)
+        , rawtohex(rt)
+        , recordTypeMap(raw2int(rt))
+        )
+      );
       error(-20731, ERR_EXPECTED_REC, stream.rec.current, recordTypeMap(raw2int(rt)));
     end if;    
   end;
@@ -395,7 +404,7 @@ create or replace package body xutl_xls is
     stream.rec.next := stream.rec.current + stream.rec.sz + HEADER_SIZE;
     stream.rec.has_next := (stream.rec.next < stream.sz);
     
-    --debug('RECORD INFO ['||to_char(stream.rec.current,'FM09999999')||'] '||stream.rec.rt);
+    --debug(utl_lms.format_message('REC[%s] 0x%s',rawtohex(stream.rec.rt),to_char(stream.rec.current,'FM0XXXXXXX')));
     
   end;
 
@@ -412,8 +421,9 @@ create or replace package body xutl_xls is
   end;
 
   procedure seek (
-    stream  in out nocopy Stream_T
-  , pos     in integer
+    stream      in out nocopy Stream_T
+  , pos         in integer
+  , read_header in boolean default false
   )
   is
   begin
@@ -426,6 +436,10 @@ create or replace package body xutl_xls is
     end if;
     stream.rec.next := pos;
     stream.rec.has_next := (stream.rec.next < stream.sz);
+    
+    if read_header then
+      next_record(stream);
+    end if;
     
   end;
   
@@ -594,7 +608,6 @@ create or replace package body xutl_xls is
     csz     pls_integer;
     csname  varchar2(30);
   begin
-    
     if sttype = ST_SHORTUNISTR then
       str.cch := read_int8(stream);
     elsif sttype != ST_UNISTR_NOCCH then
@@ -767,28 +780,7 @@ create or replace package body xutl_xls is
     sheetInfo.hsState := read_bytes(stream, 1);
     sheetInfo.dt := read_bytes(stream, 1);
     sheetInfo.stName := read_XLString(stream, ST_SHORTUNISTR).strValue;
-    debug(sheetInfo.stName);
     return sheetInfo;
-  end;
-  
-  function read_DBCell (
-    stream  in out nocopy Stream_T
-  , pos     in integer
-  )
-  return DBCell_T
-  is
-    db        DBCell_T;
-    rgdbSize  pls_integer;
-  begin
-    db.pos := pos;
-    db.dbRtrw := read_int32(stream);
-    rgdbSize := (stream.rec.sz - 4)/2; -- array size = (record size - 4)/2
-    debug(rgdbSize);
-    for i in 1 .. rgdbSize loop
-      db.rgdb(i) := read_int16(stream);
-      debug(to_char(db.rgdb(i),'FM0XXX'));
-    end loop;
-    return db;
   end;
 
   procedure read_DBCell (
@@ -798,133 +790,28 @@ create or replace package body xutl_xls is
   is
     rgdbSize  pls_integer;
   begin
-    seek(stream, db.pos);
-    next_record(stream);
+    
+    seek(stream, db.pos, read_header => true);
+    
+    -- issue #15 - check bad DBCell pointer
+    if stream.rec.rt != RT_DBCELL then
+      debug(utl_lms.format_message('Bad DBCell pointer (0x%s)',to_char(db.pos,'FM0XXXXXXX')));
+      -- go to previous DBCell record
+      seek(stream, db.prev_pos, read_header => true);
+      -- skip it
+      next_record(stream);
+      -- go to next DBCell record
+      seek_first(stream, RT_DBCELL);
+      -- save correct pointer
+      db.pos := stream.rec.current;
+    end if;
+    
     db.dbRtrw := read_int32(stream);
     rgdbSize := (stream.rec.sz - 4)/2; -- array size = (record size - 4)/2
-    debug(rgdbSize);
     for i in 1 .. rgdbSize loop
       db.rgdb(i) := read_int16(stream);
-      debug(to_char(db.rgdb(i),'FM0XXX'));
     end loop;
   end;
-  
-  /*function read_CellBlock (
-    ctx      in out nocopy Context_T
-  )
-  return ExcelTableCellList
-  is
-    db     DBCell_T;
-    base   integer; -- end of 1st row
-    cb     integer; -- start of cell block
-    rw     binary_integer;
-    col    binary_integer;
-    num    number;
-    str    String_T;
-    cnt    pls_integer;
-    ftype  raw(1);
-    
-    cells  ExcelTableCellList := ExcelTableCellList();
-    
-    procedure add_cell(v in anydata) is
-    begin
-      if ctx.rng.colMap.exists(col) then
-        cells.extend;
-        cells(cells.last) := new ExcelTableCell(rw + 1, ctx.rng.colMap(col), '', v, ctx.currShIdx);
-      end if;
-    end;
-    
-  begin
-    
-    db := ctx.shIndices(ctx.currShIdx).rgibRw(ctx.blockNum);
-    
-    if db.dbRtrw != 0 then
-      
-      base := db.pos - db.dbRtrw + 20;
-      cb := base + db.rgdb(1);     
-      seek(ctx.stream, cb);
-      -- read cells until start of DBCell record
-      loop
-        next_record(ctx.stream);
-        exit when ctx.stream.rt = RT_DBCELL;
-        rw := read_int16(ctx.stream);
-        
-        exit when rw > ctx.rng.lastRow;
-        continue when rw < ctx.rng.firstRow;
-        
-        case ctx.stream.rt
-        when RT_MULRK then
-          
-          col := read_int16(ctx.stream);
-          cnt := (ctx.stream.rsize - 6)/6;
-          for i in 1 .. cnt loop
-            skip(ctx.stream, 2); -- ixfe
-            num := read_RK(ctx.stream);
-            add_cell(anydata.ConvertNumber(num));
-            col := col + 1;
-          end loop;
-          
-        when RT_MULBLANK then
-          
-          col := read_int16(ctx.stream);
-          cnt := (ctx.stream.rsize - 6)/2;
-          for i in 1 .. cnt loop
-            skip(ctx.stream, 2); -- ixfe
-            col := col + 1;
-          end loop;      
-        
-        else
-          col := read_int16(ctx.stream);
-          skip(ctx.stream, 2); -- ixfe
-          num := null;
-          str := null;
-          case ctx.stream.rt
-          when RT_RK then
-            num := read_RK(ctx.stream);
-            add_cell(anydata.ConvertNumber(num));
-          when RT_NUMBER then
-            num := read_Number(ctx.stream);
-            add_cell(anydata.ConvertNumber(num));
-          when RT_BLANK then
-            num := null;
-            --print_cell('<BLANK>');
-          when RT_LABELSST then
-            str := read_LabelSst(ctx.stream, ctx.wb.sst);
-            if str.is_lob then
-              add_cell(anydata.ConvertClob(str.lobValue));           
-            else
-              add_cell(anydata.ConvertVarchar2(str.strValue));
-            end if;
-          when RT_FORMULA then
-            read_Formula(ctx.stream, str, num, ftype);
-            if ftype = FT_STRING then
-              if str.is_lob then
-                add_cell(anydata.ConvertClob(str.lobValue));           
-              else
-                add_cell(anydata.ConvertVarchar2(str.strValue));
-              end if;
-            else
-              add_cell(anydata.ConvertNumber(num));
-            end if;
-          else
-            null;
-          end case;
-        
-        end case;
-        
-      end loop;
-    
-    end if;
-
-    ctx.blockNum := ctx.blockNum + 1;
-    if ctx.blockNum > ctx.blockCount then
-      --ctx.done := true;
-      next_sheet(ctx);
-    end if;
-    
-    return cells;
-    
-  end;*/
 
   procedure read_CellBlock (
     ctx_id  in pls_integer
@@ -1041,9 +928,6 @@ create or replace package body xutl_xls is
     blockNum := blockNum + 1;
     if blockNum > blockCount then
       next_sheet(ctx_id);
-      --currShIdx := ctx_cache(ctx_id).currShIdx;
-      --blockNum := ctx_cache(ctx_id).blockNum;
-      --blockCount := ctx_cache(ctx_id).blockCount;
     else  
       ctx_cache(ctx_id).blockNum := blockNum;
     end if;
@@ -1079,10 +963,7 @@ create or replace package body xutl_xls is
   
   procedure read_Index (
     ctx       in out nocopy Context_T
-  --, stream    in out nocopy Stream_T
-  --, wb        in out nocopy Workbook_T
-  , sheetName in varchar2
-  --, rng       in Range_T          
+  , sheetName in varchar2         
   )
   is
     i              pls_integer;
@@ -1091,6 +972,7 @@ create or replace package body xutl_xls is
     firstRowBlock  pls_integer;
     lastRowBlock   pls_integer;
     idx            Index_T;
+    idx_pos        integer;
   begin
     
     -- move file pointer to BOF of sheet
@@ -1100,10 +982,8 @@ create or replace package body xutl_xls is
     
     -- move to Index record
     seek_first(ctx.stream, RT_INDEX);
-    /*next_record(stream);
-    while stream.offset < stream.sz and stream.rt != RT_INDEX loop
-      next_record(stream);
-    end loop;*/
+    -- save offset of Index record
+    idx_pos := ctx.stream.rec.current;
   
     skip(ctx.stream, 4); -- reserved
     idx.rwMic := read_int32(ctx.stream);
@@ -1118,16 +998,21 @@ create or replace package body xutl_xls is
     
     -- skip till first row block pointer
     skip(ctx.stream, firstRowBlock * 4);
-    idx.rgibRw := DBCellArray_T();
+    idx.rgibRw := DBCellArray_T(); 
     
     for i in 1 .. cnt loop
       pos := read_int32(ctx.stream) + 1;
       idx.rgibRw.extend;
       idx.rgibRw(i).pos := pos;
-      debug('Row block #'||to_char(i)||' = '||to_char(pos, 'FM0XXXXXXX'));
+      debug(utl_lms.format_message('Row block %s (0x%s)',to_char(i,'FM0999'),to_char(pos,'FM0XXXXXXX')));
     end loop;
+    
+    pos := idx_pos; -- initialize with index record offset
     for i in 1 .. cnt loop
+      idx.rgibRw(i).prev_pos := pos;
       read_DBCell(ctx.stream, idx.rgibRw(i));
+      -- in case a bad DBCell pointer was found
+      pos := idx.rgibRw(i).pos;
     end loop;
     
     ctx.shIndices.extend;
@@ -1484,33 +1369,6 @@ create or replace package body xutl_xls is
     
   end;
   
-  procedure read_all (p_wb in blob)
-  is
-    stream  Stream_T;
-    --wb      Workbook_T;
-  begin
-    stream.content := p_wb;
-    stream.sz := dbms_lob.getlength(stream.content);
-    stream.offset := 0;
-    stream.rec.sz := 0;
-    --stream.rstart := 1;
-    
-    --wb.comments := ExcelTableCellList();
-    
-    next_record(stream);
-    while stream.offset < stream.sz loop
-      /*
-      if stream.rt = RT_OBJ then
-        read_Obj(stream, wb);
-      elsif stream.rt = RT_NOTE then  
-        read_NoteSh(stream, wb);
-      end if;
-      */
-      next_record(stream);
-    end loop;
-  
-  end;
-  
   function new_context (
     p_file      in blob 
   , p_password  in varchar2 default null
@@ -1529,19 +1387,9 @@ create or replace package body xutl_xls is
     
     ctx.stream := open_stream(p_file);
     read_Globals(ctx.stream, ctx.wb, p_password);
-    --read_Index(ctx.stream, ctx.wb, p_sheet, ctx.rng);
-    
-    /*if p_readComments then
-      read_Comments(ctx.stream, ctx.wb, p_sheet);
-    end if;*/
     
     ctx.shIndices := IndexArray_T();
-    ctx.currShIdx := 0;
-    
-    --ctx.blockNum := 1;
-    --ctx.blockCount := ctx.wb.idx.rgibRw.count;
-    --ctx.done := (ctx.blockNum > ctx.blockCount);
-    
+    ctx.currShIdx := 0;    
     ctx_id := nvl(ctx_cache.last, 0) + 1;
     ctx_cache(ctx_id) := ctx;
     

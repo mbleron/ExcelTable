@@ -28,6 +28,7 @@ create or replace package xutl_xls is
     Marc Bleron       2018-02-04     Creation
     Marc Bleron       2018-10-17     New buffered LOB reader
     Marc Bleron       2018-10-28     Multi-sheet support
+    Marc Bleron       2019-09-28     Fallback mechanism for bad DBCell pointers in Index
 ====================================================================================== */
   
   procedure set_debug (p_mode in boolean);

@@ -58,6 +58,8 @@ create or replace package ExcelTable is
                                            value as a NUMBER(p) or NUMBER(p,s)
                                      Fix : DML API : Default value not applied for 
                                            empty cells
+    Marc Bleron       2019-09-26     Fix : Error when using FOR ORDINALITY with a 
+                                           positional text data source
 ====================================================================================== */
 
   -- Read methods  
