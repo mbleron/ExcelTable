@@ -305,12 +305,12 @@ return ExcelTableCellList pipelined;
 
 Parameter|Description|Mandatory
 ---|---|---
-`p_file`|Cf. [getRows](getrows-function) function|Yes
-`p_sheetFilter`|An ANYDATA instance representing either a sheet name pattern or a collection of sheet names (ExcelTableSheetList). <br/>See parameters `p_sheet` and `p_sheets` in [getRows](getrows-function) function.|Yes
+`p_file`|Cf. [getRows](#getrows-function) function|Yes
+`p_sheetFilter`|An ANYDATA instance representing either a sheet name pattern or a collection of sheet names (ExcelTableSheetList). <br/>See parameters `p_sheet` and `p_sheets` in [getRows](#getrows-function) function.|Yes
 `p_cols`|A list of comma-separated column references, or range of column references. <br/>For example : `'A,B,E,F'`, `'A-G'`, `'A,D-F'`|Yes
-`p_range`|Cf. [getRows](getrows-function) function|No
-`p_method`|Cf. [getRows](getrows-function) function|No
-`p_password`|Cf. [getRows](getrows-function) function|No
+`p_range`|Cf. [getRows](#getrows-function) function|No
+`p_method`|Cf. [getRows](#getrows-function) function|No
+`p_password`|Cf. [getRows](#getrows-function) function|No
 
 Available columns in the result set are :  
 Name|Data type|Description
@@ -1272,7 +1272,7 @@ FROM Table(
 
 ## CHANGELOG
 
-### 5.0 (2020--)
+### 5.0 (2020-03-25)
 * Fix : issue #18 
 * Enhancements : 
   * issue #19
