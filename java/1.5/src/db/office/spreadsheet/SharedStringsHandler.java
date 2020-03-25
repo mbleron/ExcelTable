@@ -30,11 +30,8 @@ public class SharedStringsHandler extends DefaultHandler {
 		if (localName.equals("t")) {
 			this.in_text = true;
 		} else if (localName.equals("sst")) {
-			String uniqueCount = attrs.getValue("uniqueCount");
-			if (uniqueCount != null) {
-				int cnt = Integer.parseInt(uniqueCount);
-				this.strings = new String[cnt];
-			}
+			int cnt = Integer.parseInt(attrs.getValue("uniqueCount"));
+			this.strings = new String[cnt];
 		}
 
 	}
