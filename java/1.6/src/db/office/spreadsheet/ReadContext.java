@@ -1,7 +1,6 @@
 package db.office.spreadsheet;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.DriverManager;
@@ -10,6 +9,8 @@ import java.sql.Struct;
 import java.util.ArrayList;
 import java.util.List;
 
+import db.office.spreadsheet.odf.ODFCellReaderImpl;
+import db.office.spreadsheet.oox.OOXCellReaderImpl;
 import oracle.CartridgeServices.ContextManager;
 import oracle.CartridgeServices.CountException;
 import oracle.CartridgeServices.InvalidKeyException;
@@ -31,18 +32,24 @@ public class ReadContext {
 		return ctx;
 	}
 	
-	public ReadContext(InputStream sharedStrings, String columns, int firstRow, int lastRow)
-			throws IOException, CellReaderException {
+	public ReadContext(String type, String columns, int firstRow, int lastRow)
+			throws CellReaderException {
 
-		this.reader = new CellReader(sharedStrings, columns, firstRow, lastRow);
+		if (type.equals("OOX")) {
+			this.reader = new OOXCellReaderImpl(columns, firstRow, lastRow);
+		} else if (type.equals("ODF")) {
+			this.reader = new ODFCellReaderImpl(columns, firstRow, lastRow);
+		} else {
+			throw new IllegalArgumentException("Invalid context type : " + type);
+		}
 
 	}
 	
-	public static int initialize(Blob sharedStrings, String columns, int firstRow, int lastRow, int vc2MaxSize)
-			throws IOException, CellReaderException, SQLException {
+	public static int initialize(String type, String columns, int firstRow, int lastRow, int vc2MaxSize)
+			throws CellReaderException {
 				
 		VC2_MAXSIZE = vc2MaxSize; 
-		ReadContext ctx = new ReadContext((sharedStrings!=null)?sharedStrings.getBinaryStream():null, columns, firstRow, lastRow);
+		ReadContext ctx = new ReadContext(type, columns, firstRow, lastRow);
 		
 		int key = 0;
 		try {
@@ -54,23 +61,47 @@ public class ReadContext {
 
 	}
 	
-	public static void addSheet (int key, int index, Blob content) throws CellReaderException {
+	public static Array getSheetList(int key) throws SQLException, CellReaderException {
+		OracleConnection conn = (OracleConnection) DriverManager.getConnection("jdbc:default:connection:");	
 		ReadContext ctx = ReadContext.get(key);
-		ctx.reader.addSheet(index, content);
+		return conn.createOracleArray("EXCELTABLESHEETLIST", ctx.reader.getSheetList().toArray());
+	}
+	
+	public static void setContent(int key, Blob content) 
+			throws CellReaderException, IOException, SQLException {
+		ReadContext ctx = ReadContext.get(key);
+		((ODFCellReaderImpl) ctx.reader).setContent(content.getBinaryStream());
+	}
+	
+	public static void setSharedStrings(int key, Blob sharedStrings) 
+			throws CellReaderException, IOException, SQLException {
+		ReadContext ctx = ReadContext.get(key);
+		if (sharedStrings != null) {
+			((OOXCellReaderImpl) ctx.reader).readStrings(sharedStrings.getBinaryStream());
+		}
+	}
+	
+	public static void addSheet(int key, int index, Blob content, Blob comments) 
+			throws CellReaderException, SQLException, IOException {
+		ReadContext ctx = ReadContext.get(key);
+		ctx.reader.addSheet(new Sheet(index, content));
+		if (comments != null) {
+			((OOXCellReaderImpl) ctx.reader).addComments(index, comments.getBinaryStream());
+		}
 	}
 	
 	public static Array iterate(int key, int nrows) 
 			throws SQLException, CellReaderException {
 		
 		OracleConnection conn = (OracleConnection) DriverManager.getConnection("jdbc:default:connection:");
+		
 		ReadContext ctx = ReadContext.get(key);
 		
 		int listSize = nrows * ctx.reader.getColumnCount();
 		List<Struct> array = new ArrayList<Struct>(listSize);
-		ctx.reader.initSheetIterator();
 		List<Row> rows = ctx.reader.readRows(nrows);
 		for (Row r : rows) {
-			for (Cell c : r) {
+			for (Cell<?> c : r) {
 				array.add(conn.createStruct("EXCELTABLECELL", c.getOraData(conn)));
 			}
 		}

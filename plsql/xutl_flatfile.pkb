@@ -307,7 +307,7 @@ create or replace package body xutl_flatfile is
       field.id := field.id + 1;
       if r_num > skip and colmap.exists(field.id) then
         fields.extend;
-        fields(fields.count) := ExcelTableCell(r_num, colmap(field.id), null, anydata.ConvertVarchar2(field.str_value), null);
+        fields(fields.count) := ExcelTableCell(r_num, colmap(field.id), null, anydata.ConvertVarchar2(field.str_value), null, null);
       end if;
       -- reset field size
       field.sz := 0;    
@@ -662,7 +662,7 @@ create or replace package body xutl_flatfile is
           end if;
           
           fields.extend;
-          fields(fields.last) := ExcelTableCell(r_num, colmap(i), null, anydata.ConvertVarchar2(trim(field_value)), null);
+          fields(fields.last) := ExcelTableCell(r_num, colmap(i), null, anydata.ConvertVarchar2(trim(field_value)), null, null);
         
         end loop;
         

@@ -20,6 +20,7 @@ create or replace package body xutl_xls is
   RT_NOTE          constant raw(2) := '1C00';
   RT_MSODRAWING    constant raw(2) := 'EC00';
   RT_TXO           constant raw(2) := 'B601';
+  RT_BOOLERR       constant raw(2) := '0502';
   
   RT_USREXCL       constant raw(2) := '9401';
   RT_FILELOCK      constant raw(2) := '9501';
@@ -39,6 +40,7 @@ create or replace package body xutl_xls is
   FT_ERR_NAME      constant raw(1) := '1D';
   FT_ERR_NUM       constant raw(1) := '24';
   FT_ERR_NA        constant raw(1) := '2A';
+  FT_ERR_GETDATA   constant raw(1) := '2B';
    
   BOOL_FALSE       constant raw(1) := '00';
   BOOL_TRUE        constant raw(1) := '01';
@@ -184,6 +186,10 @@ create or replace package body xutl_xls is
   , fExprO  raw(2)
   );
   
+  -- comments
+  type CommentMap_T is table of varchar2(32767) index by varchar2(7); -- cell comment indexed by cellref
+  type Notes_T is table of CommentMap_T index by pls_integer; -- comment map indexed by sheet index
+  
   type Context_T is record (
     stream      Stream_T
   , wb          Workbook_T
@@ -193,6 +199,8 @@ create or replace package body xutl_xls is
   , done        boolean := false
   , shIndices   IndexArray_T
   , currShIdx   pls_integer
+  , readNotes   boolean
+  , notes       Notes_T 
   );
   
   type Context_cache_T is table of Context_T index by pls_integer;
@@ -768,6 +776,35 @@ create or replace package body xutl_xls is
     end if;
     
   end;
+
+  procedure read_BoolErr (
+    stream  in out nocopy Stream_T
+  , str     in out nocopy String_T
+  )
+  is
+    bBoolErr  raw(1) := read_bytes(stream, 1);
+    fError    boolean := (read_bytes(stream, 1) = BOOL_TRUE);
+  begin
+    if fError then
+      str.strValue := 
+        case bBoolErr
+          when FT_ERR_NULL then '#NULL!'
+          when FT_ERR_DIV_ZERO then '#DIV/0!'
+          when FT_ERR_VALUE then '#VALUE!'
+          when FT_ERR_REF then '#REF!'
+          when FT_ERR_NAME then '#NAME?'
+          when FT_ERR_NUM then '#NUM!'
+          when FT_ERR_NA then '#N/A'
+          when FT_ERR_GETDATA then '#GETTING_DATA'
+        end;
+    else
+      str.strValue := 
+        case bBoolErr 
+          when BOOL_TRUE then 'TRUE' 
+          when BOOL_FALSE then 'FALSE' 
+        end;
+    end if;
+  end;
   
   function read_SheetInfo (
     stream  in out nocopy Stream_T
@@ -834,11 +871,20 @@ create or replace package body xutl_xls is
     blockNum    pls_integer := ctx_cache(ctx_id).blockNum;
     blockCount  pls_integer := ctx_cache(ctx_id).blockCount;
     
+    function get_note (cell_ref in varchar2) return varchar2 is
+    begin
+      if ctx_cache(ctx_id).notes.exists(currShIdx) and ctx_cache(ctx_id).notes(currShIdx).exists(cell_ref) then
+        return ctx_cache(ctx_id).notes(currShIdx)(cell_ref);
+      else
+        return null;
+      end if;
+    end;
+    
     procedure add_cell(v in anydata) is
     begin
       if rng.colMap.exists(col) then
         cells.extend;
-        cells(cells.last) := new ExcelTableCell(rw + 1, rng.colMap(col), '', v, currShIdx);
+        cells(cells.last) := new ExcelTableCell(rw + 1, rng.colMap(col), '', v, currShIdx, get_note(rng.colMap(col)||to_char(rw+1)));
       end if;
     end;
     
@@ -895,7 +941,6 @@ create or replace package body xutl_xls is
             add_cell(anydata.ConvertNumber(num));
           when RT_BLANK then
             num := null;
-            --print_cell('<BLANK>');
           when RT_LABELSST then
             str := read_LabelSst(ctx_id, stream);
 
@@ -915,11 +960,16 @@ create or replace package body xutl_xls is
             else
               add_cell(anydata.ConvertNumber(num));
             end if;
+          when RT_BOOLERR then
+            read_BoolErr(stream, str);
+            add_cell(anydata.ConvertVarchar2(str.strValue));
           else
             null;
           end case;
         
         end case;
+        
+        --debug(utl_lms.format_message('[%d,%d]=%s', rw+1, col+1, rawtohex(stream.rec.rt)));
         
       end loop;
     
@@ -1004,7 +1054,7 @@ create or replace package body xutl_xls is
       pos := read_int32(ctx.stream) + 1;
       idx.rgibRw.extend;
       idx.rgibRw(i).pos := pos;
-      debug(utl_lms.format_message('Row block %s (0x%s)',to_char(i,'FM0999'),to_char(pos,'FM0XXXXXXX')));
+      --debug(utl_lms.format_message('Row block %s (0x%s)',to_char(i,'FM0999'),to_char(pos,'FM0XXXXXXX')));
     end loop;
     
     pos := idx_pos; -- initialize with index record offset
@@ -1072,9 +1122,8 @@ create or replace package body xutl_xls is
   
   function read_NoteSh (
     stream  in out nocopy Stream_T
-  , txtMap  in TxOMap_T
   )
-  return ExcelTableCell
+  return NoteSh_T
   is
     note  NoteSh_T;
   begin
@@ -1083,26 +1132,21 @@ create or replace package body xutl_xls is
     skip(stream, 2);
     note.idObj := read_int16(stream);
     note.stAuthor := read_XLString(stream, ST_UNISTR).strValue;
-    
-    return new ExcelTableCell(
-                 note.rw + 1
-               , base26encode(note.col)
-               , null
-               , anydata.ConvertVarchar2(txtMap(note.idObj))
-               , null
-               );
+    return note;
   end;
 
-  procedure read_Comments (
+  function read_Comments (
     ctx        in out nocopy Context_T
   , sheetName  in varchar2
-  , comments   in out nocopy ExcelTableCellList
   )
+  return CommentMap_T
   is
     i             pls_integer;
     pos           integer;
     found_NoteSh  boolean := false;
     txtMap        TxOMap_T;
+    note          NoteSh_T;
+    commentMap    CommentMap_T;
   begin
     
     -- move file pointer to BOF of sheet
@@ -1120,13 +1164,15 @@ create or replace package body xutl_xls is
         read_Obj(ctx.stream, txtMap);
       when RT_NOTE then
         found_NoteSh := true;
-        comments.extend;
-        comments(comments.last) := read_NoteSh(ctx.stream, txtMap);
+        note := read_NoteSh(ctx.stream);
+        commentMap(base26encode(note.col) || to_char(note.rw + 1)) := txtMap(note.idObj);
       else
         exit when found_NoteSh;
       end case;
       next_record(ctx.stream);
     end loop;
+    
+    return commentMap;
 
   end;
 
@@ -1138,7 +1184,7 @@ create or replace package body xutl_xls is
     DUMMY_HEADER constant raw(4) := hextoraw('00000000');
     BLOCKSIZE    pls_integer;
         
-    baseKey              raw(5);
+    keyInfo              xutl_offcrypto.rc4_info_t;
     derivedKey           raw(16);
     blockNum             pls_integer := 0;
     blockBuffer          raw(1024);
@@ -1176,7 +1222,7 @@ create or replace package body xutl_xls is
       blockBuffer := null;
       blockOffset := 1;
       leftInBlock := 1024;
-      derivedKey := xutl_offcrypto.get_key_binary_rc4(baseKey, num);
+      derivedKey := xutl_offcrypto.get_key_binary_rc4(keyInfo, num);
     end;
 
     procedure write_block_chunk
@@ -1239,7 +1285,7 @@ create or replace package body xutl_xls is
   begin
     
     debug('start decrypt');
-    baseKey := xutl_offcrypto.get_key_binary_rc4_base(read_bytes(stream, stream.rec.sz), password);
+    keyInfo := xutl_offcrypto.get_binary_rc4_info(read_bytes(stream, stream.rec.sz), password);
     -- rewind
     seek(stream, 1);
   
@@ -1375,6 +1421,7 @@ create or replace package body xutl_xls is
   , p_cols      in varchar2 default null
   , p_firstRow  in pls_integer default null
   , p_lastRow   in pls_integer default null
+  , p_readNotes in boolean default true
   )
   return pls_integer
   is
@@ -1389,7 +1436,8 @@ create or replace package body xutl_xls is
     read_Globals(ctx.stream, ctx.wb, p_password);
     
     ctx.shIndices := IndexArray_T();
-    ctx.currShIdx := 0;    
+    ctx.currShIdx := 0;
+    ctx.readNotes := nvl(p_readNotes, true);
     ctx_id := nvl(ctx_cache.last, 0) + 1;
     ctx_cache(ctx_id) := ctx;
     
@@ -1429,6 +1477,9 @@ create or replace package body xutl_xls is
   begin
     for i in 1 .. p_sheetList.count loop
       read_Index(ctx_cache(p_ctx_id), p_sheetList(i));
+      if ctx_cache(p_ctx_id).readNotes then
+        ctx_cache(p_ctx_id).notes(i) := read_Comments(ctx_cache(p_ctx_id), p_sheetList(i));
+      end if;
     end loop;
     next_sheet(p_ctx_id);
   end;
@@ -1450,6 +1501,7 @@ create or replace package body xutl_xls is
     return cells;
   end;
   
+  /*
   function get_comments (
     p_ctx_id     in pls_integer
   , p_sheetName  in varchar2
@@ -1458,9 +1510,10 @@ create or replace package body xutl_xls is
   is
     comments  ExcelTableCellList := ExcelTableCellList();
   begin
-    read_Comments(ctx_cache(p_ctx_id), p_sheetName, comments);
+    --read_Comments(ctx_cache(p_ctx_id), p_sheetName, comments);
     return comments;
   end;
+  */
   
   function getRows (
     p_file      in blob 

@@ -2,23 +2,34 @@ package db.office.spreadsheet;
 
 import java.util.ArrayList;
 
-public class Row extends ArrayList<Cell> {
+public class Row extends ArrayList<Cell<?>> {
 
 	private static final long serialVersionUID = 6615809380592083862L;
-	private int ref;
+	private int rowIndex;
 	
-	public Row(int rowRef, int cellCount) {
+	public Row(int rowIndex, int cellCount) {
 		super(cellCount);
-		this.ref = rowRef;
+		this.rowIndex = rowIndex;
 	}
 	
-	public int getRef() {
-		return this.ref;
+	public int getRowIndex() {
+		return rowIndex;
 	}
 	
-	public Cell[] getCells() {
-		Cell[] cells = new Cell[this.size()];
-		return this.toArray(cells);
+	public Cell<?>[] getCells() {
+		Cell<?>[] cells = new Cell[size()];
+		return toArray(cells);
+	}
+	
+	public static Row copyTo(Row row, int rowIndex) {
+		Row targetRow = null;
+		if (row != null) {
+			targetRow = new Row(rowIndex, row.size());
+			for (Cell<?> c:row) {
+				targetRow.add(c.copyToRow(rowIndex));
+			}
+		}
+		return targetRow;		
 	}
 	
 }

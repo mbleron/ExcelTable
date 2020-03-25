@@ -1,5 +1,6 @@
 
 # ExcelTable - An Oracle SQL Interface for MS Excel, ODF Spreadsheet and Flat Files
+<p align="center"><img src="./resources/banner.png"/></p>
 
 ExcelTable is a pipelined table interface to read Excel files (.xlsx, .xlsm, .xlsb, .xls, .xml), ODF spreadsheet files (.ods), and flat files (delimited or positional) as if they were external tables.  
 It is primarily implemented in PL/SQL using an object type (for the ODCI routines) and a package supporting the core functionalities.
@@ -10,10 +11,19 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 * [Installation](#installation)  
 * [Quick Start](#quick-start)
 * [ExcelTable Subprograms and Usage](#exceltable-subprograms-and-usage)  
+  * [Columns syntax specification](#columns-syntax-specification)
+  * [Range syntax specification](#range-syntax-specification)
+  * [Cryptographic features overview](#cryptographic-features-overview)
+  * [Examples](#examples)
 * [CHANGELOG](#changelog)  
 
 
 ## What's New in...
+> Version 5.0 : 
+> Support for strict OOXML documents  
+> Streaming read method for ODF files  
+> Raw cells listing  
+
 > Version 4.0 : 
 > Support for delimited and positional flat files
 
@@ -88,6 +98,10 @@ ExcelTable requires additional Java classes for the following features :
 * Reading password-protected ODF spreadsheets encrypted using the Blowfish algorithm (ODF 1.0/1.1)
 
 JAR files to deploy depend on the database version : 
+
+:warning: **As of ExcelTable 5.0, Java-based features are desupported on database versions < 11\.2\.0\.4**  
+If necessary, you may create an [issue](https://github.com/mbleron/ExcelTable/issues) and request a backport for your version.
+Otherwise, please use the last compatible release [ExcelTable 4.0.1](https://github.com/mbleron/ExcelTable/releases/tag/v4.0.1).  
 
 * Versions < 11\.2\.0\.4  
 Except for version 11\.2\.0\.4 which supports JDK 6, Oracle 11g only supports JDK 5 (Java 1.5).
@@ -167,13 +181,35 @@ FROM Table(
      ) t
 ;
 ```
+Getting cells list : 
+```sql
+SELECT t.sheetIdx
+     , t.cellRow
+     , t.cellCol
+     , t.cellData.getTypeName() as typeName
+     , case when t.cellData.getTypeName() = 'SYS.VARCHAR2' then t.cellData.accessVarchar2() end as strval
+     , case when t.cellData.getTypeName() = 'SYS.NUMBER' then t.cellData.accessNumber() end as numval
+     , case when t.cellData.getTypeName() = 'SYS.TIMESTAMP' then t.cellData.accessTimestamp() end as tsval
+     , case when t.cellData.getTypeName() = 'SYS.CLOB' then t.cellData.accessClob() end as lobval
+     , t.cellNote
+FROM Table(
+       ExcelTable.getRawCells(
+         p_file        => ExcelTable.getFile('XL_DATA_DIR','my_file.xlsx')
+       , p_sheetFilter => anydata.ConvertVarchar2('my_sheet')
+       , p_cols        => 'A-F'
+       )
+     ) t
+;
+```
+
 See the following sections for more examples and detailed description of ExcelTable features.
 
 ## ExcelTable Subprograms and Usage
 
 * [getRows](#getrows-function)  
-* [getFile](#getfile-function)
-* [getTextFile](#gettextfile-function)
+* [getRawCells](#getrawcells-function)  
+* [getFile](#getfile-function)  
+* [getTextFile](#gettextfile-function)  
 * [setFetchSize](#setfetchsize-procedure)  
 * [useSheetPattern](#usesheetpattern-procedure)  
 * [getCursor](#getcursor-function)  
@@ -249,6 +285,42 @@ For backward compatibility, this feature is disabled by default. It may be toggl
 ```sql
 sheet_pattern_enabled  boolean := true;
 ```
+
+---
+### getRawCells function
+This is a pipelined function returning a set of raw cells from the input spreadsheet file.  
+Cell value is provided as an ANYDATA instance in cellData column.
+
+```sql
+function getRawCells (
+  p_file         in blob
+, p_sheetFilter  in anydata
+, p_cols         in varchar2
+, p_range        in varchar2 default null
+, p_method       in binary_integer default DOM_READ
+, p_password     in varchar2 default null
+)
+return ExcelTableCellList pipelined;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_file`|Cf. [getRows](getrows-function) function|Yes
+`p_sheetFilter`|An ANYDATA instance representing either a sheet name pattern or a collection of sheet names (ExcelTableSheetList). <br/>See parameters `p_sheet` and `p_sheets` in [getRows](getrows-function) function.|Yes
+`p_cols`|A list of comma-separated column references, or range of column references. <br/>For example : `'A,B,E,F'`, `'A-G'`, `'A,D-F'`|Yes
+`p_range`|Cf. [getRows](getrows-function) function|No
+`p_method`|Cf. [getRows](getrows-function) function|No
+`p_password`|Cf. [getRows](getrows-function) function|No
+
+Available columns in the result set are :  
+Name|Data type|Description
+---|---|---
+cellRow|INTEGER|Row number
+cellCol|VARCHAR2(3)|Column reference
+cellType|VARCHAR2(10)|Internal use only. <br/>Use `cellData.getTypeName()` to retrieve the system type name.
+cellData|ANYDATA|Cell value. Use the ad hoc accessor to extract the value, e.g. `cellData.accessVarchar2()` if type name is 'SYS.VARCHAR2'.
+sheetIdx|INTEGER|Sheet index (1-based)
+cellNote|VARCHAR2(32767)|Cell comment
 
 ---
 ### getFile function
@@ -644,13 +716,14 @@ There are four ways to specify the table range :
 By default, Office 97-2003 password-protected files use RC4 encryption.  
 Latest versions (2007+) based on [ECMA-376](http://www.ecma-international.org/publications/standards/Ecma-376.htm) standard use AES encryption : 
 
-| Office version  | Method  | Encryption | Hash algorithm | Block chaining  
-| :-------------- | :-----  | :--------- | :------------- | :-------------
-| 97-2003         | RC4     | RC4        | MD5            | -
-| 2007            | Standard| AES-128    | SHA-1          | ECB
-| 2010            | Agile   | AES-128    | SHA-1          | CBC
-| 2013            | Agile   | AES-256    | SHA512         | CBC
-| 2016            | Agile   | AES-256    | SHA512         | CBC
+| Office version  | Method        | Encryption | Hash algorithm | Block chaining  
+| :-------------- | :------------ | :--------- | :------------- | :-------------
+| 97-2003         | RC4           | RC4        | MD5            | -
+|                 | RC4 CryptoAPI | RC4        | SHA-1          | -
+| 2007            | Standard      | AES-128    | SHA-1          | ECB
+| 2010            | Agile         | AES-128    | SHA-1          | CBC
+| 2013            | Agile         | AES-256    | SHA512         | CBC
+| 2016            | Agile         | AES-256    | SHA512         | CBC
 
 As for ODF : 
 
@@ -858,7 +931,7 @@ from table(
          , "COL_3"  timestamp(3)
          }'
        , p_range    => 'A1'
-       , p_method   => null
+       , p_method   => 0
        , p_password => 'pass123'
        )
      ) t
@@ -1154,7 +1227,58 @@ from table(
 ;
 ```
 
+* Reading raw cells, using a sheet name pattern
+```sql
+SELECT t.sheetIdx
+     , t.cellRow
+     , t.cellCol
+     , t.cellData.getTypeName() as typeName
+     , case when t.cellData.getTypeName() = 'SYS.VARCHAR2' then t.cellData.accessVarchar2() end as strval
+     , case when t.cellData.getTypeName() = 'SYS.NUMBER' then t.cellData.accessNumber() end as numval
+     , case when t.cellData.getTypeName() = 'SYS.TIMESTAMP' then t.cellData.accessTimestamp() end as tsval
+     , case when t.cellData.getTypeName() = 'SYS.CLOB' then t.cellData.accessClob() end as lobval
+     , t.cellNote
+FROM Table(
+       ExcelTable.getRawCells(
+         p_file        => ExcelTable.getFile('XL_DATA_DIR','multisheet.xlsx')
+       , p_sheetFilter => anydata.ConvertVarchar2('Sheet1')
+       , p_cols        => 'A'
+       )
+     ) t
+;
+```
+
+* Reading raw cells, using a sheet list
+
+```sql
+SELECT t.sheetIdx
+     , t.cellRow
+     , t.cellCol
+     , t.cellData.getTypeName() as typeName
+     , case when t.cellData.getTypeName() = 'SYS.VARCHAR2' then t.cellData.accessVarchar2() end as strval
+     , case when t.cellData.getTypeName() = 'SYS.NUMBER' then t.cellData.accessNumber() end as numval
+     , case when t.cellData.getTypeName() = 'SYS.TIMESTAMP' then t.cellData.accessTimestamp() end as tsval
+     , case when t.cellData.getTypeName() = 'SYS.CLOB' then t.cellData.accessClob() end as lobval
+     , t.cellNote
+FROM Table(
+       ExcelTable.getRawCells(
+         p_file        => ExcelTable.getFile('XL_DATA_DIR','multisheet.xlsx')
+       , p_sheetFilter => anydata.ConvertCollection(ExcelTableSheetList('Sheet2','Sheet3'))
+       , p_cols        => 'A'
+       )
+     ) t
+;
+```
+
 ## CHANGELOG
+
+### 5.0 (2020--)
+* Fix : issue #18 
+* Enhancements : 
+  * issue #19
+  * Support for strict OOXML documents  
+  * Streaming read method for ODF files  
+  * Raw cells listing
 
 ### 4.0.1 (2019-09-29)
 * Fix : issue #14
@@ -1238,4 +1362,4 @@ from table(
 
 ## Copyright and license
 
-Copyright 2016-2019 Marc Bleron. Released under MIT license.
+Copyright 2016-2020 Marc Bleron. Released under MIT license.

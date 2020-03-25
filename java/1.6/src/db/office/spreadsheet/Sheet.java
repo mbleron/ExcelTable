@@ -7,6 +7,10 @@ public class Sheet {
 	private Blob content;
 	private int index = 0;
 	
+	public Sheet(int index) {
+		this.index = index;
+	}
+	
 	public Sheet(int index, Blob content) {
 		this.index = index;
 		this.content = content;

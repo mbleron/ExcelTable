@@ -111,6 +111,10 @@ create or replace package body xutl_xlsb is
   
   type SheetList_T is table of blob;
   
+    -- comments
+  type CommentMap_T is table of varchar2(32767) index by varchar2(10); -- cell comment indexed by cellref
+  type Comments_T is table of CommentMap_T index by pls_integer; -- comment map indexed by sheet index
+  
   type Context_T is record (
     stream      Stream_T
   , sst         SST_T
@@ -119,6 +123,7 @@ create or replace package body xutl_xlsb is
   , done        boolean
   , sheetList   SheetList_T
   , curr_sheet  pls_integer
+  , comments    Comments_T
   );
   
   type Context_cache_T is table of Context_T index by pls_integer;
@@ -329,7 +334,7 @@ create or replace package body xutl_xlsb is
     stream.available := stream.rsize;
     -- current record start
     stream.rstart := stream.offset;
-    debug('RECORD INFO ['||to_char(stream.rstart,'FM09999999')||']['||lpad(stream.rsize,6)||'] '||stream.rt);
+    debug('RECORD INFO ['||to_char(stream.rstart,'FM0XXXXXXX')||']['||lpad(stream.rsize,6)||'] '||stream.rt);
   end;
 
   procedure seek_first (
@@ -434,7 +439,6 @@ create or replace package body xutl_xlsb is
       debug('Switching to sheet '||ctx.curr_sheet);
       ctx.stream := open_stream(ctx.sheetList(ctx.curr_sheet));
       exit;
-      --has_next := (ctx.curr_sheet < ctx.sheetList.count);
     end loop;
     if not has_next then
       debug('End of sheet list');
@@ -650,11 +654,12 @@ create or replace package body xutl_xlsb is
   )
   return ExcelTableCellList
   is
-    rcnt   pls_integer := 0;
-    rw     pls_integer := ctx.curr_rw;
-    col    pls_integer;
-    num    number;
-    str    String_T;
+    rcnt      pls_integer := 1;
+    rw        pls_integer := ctx.curr_rw;
+    col       pls_integer;
+    num       number;
+    str       String_T;
+    emptyRow  boolean := true;
     
     cells  ExcelTableCellList := ExcelTableCellList();
     
@@ -663,28 +668,36 @@ create or replace package body xutl_xlsb is
       col := read_int32(ctx.stream);
       skip(ctx.stream, 4); -- iStyleRef, fPhShow, reserved
     end;
+
+    function get_comment (cell_ref in varchar2) return varchar2 is
+    begin
+      if ctx.comments.exists(ctx.curr_sheet) and ctx.comments(ctx.curr_sheet).exists(cell_ref) then
+        return ctx.comments(ctx.curr_sheet)(cell_ref);
+      else
+        return null;
+      end if;
+    end;
     
     procedure add_cell(val in anydata) is
     begin
       if ctx.rng.colMap.count = 0 or ctx.rng.colMap.exists(col) then
         cells.extend;
-        cells(cells.last) := new ExcelTableCell(rw + 1, base26encode(col), null, val, ctx.curr_sheet);
+        cells(cells.last) := new ExcelTableCell(rw + 1, base26encode(col), null, val, ctx.curr_sheet, get_comment(base26encode(col) || to_char(rw + 1)));
+        emptyRow := false;
       end if;
     end;
     
   begin
-  
+    /*
     if rw is not null then
       rcnt := 1;
     end if;
-    
+    */
     next_record(ctx.stream);
     
     loop
            
       if ctx.stream.rt = BRT_ENDSHEETDATA then
-        --ctx.done := true;
-        --exit;
         next_sheet(ctx);
         
       elsif ctx.stream.rt = BRT_ROWHDR then
@@ -693,18 +706,22 @@ create or replace package body xutl_xlsb is
         
         if rw > ctx.rng.lastRow then
           debug('End of range');
-          --ctx.done := true;
-          --exit;
           next_sheet(ctx);
         
         elsif rw >= ctx.rng.firstRow then
           
-          rcnt := rcnt + 1;
+          -- if previous row was not empty
+          if not emptyRow then
+            rcnt := rcnt + 1;
+          end if;
+          --rcnt := rcnt + 1;
+          
           if rcnt > nrows then
-            debug('Batch size = '||to_char(rcnt-1));
             ctx.curr_rw := rw;
             exit;
           end if;
+          
+          emptyRow := true;
           
         end if;
         
@@ -799,6 +816,8 @@ create or replace package body xutl_xlsb is
     
     end loop;
     
+    debug('cells.count='||cells.count);
+    
     return cells;
     
   end;
@@ -852,15 +871,16 @@ create or replace package body xutl_xlsb is
     return cmt;
   end;
 
-  procedure read_CommentList (
-    stream       in out nocopy Stream_T
-  , commentList  in out nocopy ExcelTableCellList
+  function read_Comments (
+    content  in blob
   )
+  return CommentMap_T
   is
-    cmt  Comment_T;
-    i    pls_integer := 0;
+    stream      Stream_T;
+    commentMap  CommentMap_T;
+    cmt         Comment_T;
   begin
-    
+    stream := open_stream(content);
     next_record(stream);
     expect(stream, BRT_BEGINCOMMENTS);
     
@@ -868,18 +888,13 @@ create or replace package body xutl_xlsb is
     while stream.rt != BRT_ENDCOMMENTLIST loop    
       if stream.rt = BRT_BEGINCOMMENT then
         cmt := read_Comment(stream);
-        commentList.extend;
-        i := i + 1;
-        commentList(i) := ExcelTableCell(
-                            cellRow => cmt.rw + 1
-                          , cellCol => base26encode(cmt.col)
-                          , cellType => null
-                          , cellData => anydata.ConvertVarchar2(cmt.text)
-                          , sheetIdx => null
-                          );
+        commentMap(base26encode(cmt.col) || to_char(cmt.rw + 1)) := cmt.text;
       end if;
       next_record(stream);
     end loop;
+    
+    close_stream(stream); 
+    return commentMap;
 
   end;
   
@@ -919,9 +934,7 @@ create or replace package body xutl_xlsb is
     ctx     Context_T;
     ctx_id  pls_integer; 
   begin
-    
-    --read_SheetMap(p_wb_part, ctx.sheetMap);
-  
+      
     if p_sst_part is not null then
       read_sst(p_sst_part, ctx.sst);
     end if;
@@ -929,7 +942,6 @@ create or replace package body xutl_xlsb is
     ctx.rng.firstRow := nvl(p_firstRow, 1) - 1;
     ctx.rng.lastRow := nvl(p_lastRow, 1048576) - 1;
     ctx.rng.colMap := parseColumnList(p_cols);
-    --ctx.stream := open_stream(p_sheet_part);
     ctx.done := false;
     ctx.sheetList := SheetList_T();
     ctx.curr_sheet := 0;
@@ -942,8 +954,9 @@ create or replace package body xutl_xlsb is
   end;
 
   procedure add_sheet (
-    p_ctx_id   in pls_integer
-  , p_content  in blob
+    p_ctx_id    in pls_integer
+  , p_content   in blob
+  , p_comments  in blob
   )
   is
     i  pls_integer;
@@ -951,6 +964,10 @@ create or replace package body xutl_xlsb is
     ctx_cache(p_ctx_id).sheetList.extend;
     i := ctx_cache(p_ctx_id).sheetList.last;
     ctx_cache(p_ctx_id).sheetList(i) := p_content;
+    -- comments
+    if p_comments is not null then
+      ctx_cache(p_ctx_id).comments(i) := read_Comments(p_comments);
+    end if;
   end;
 
   function iterate_context (
@@ -979,21 +996,7 @@ create or replace package body xutl_xlsb is
     ctx_cache(p_ctx_id).sst.strings := String_Array_T();
     ctx_cache.delete(p_ctx_id);
   end;
-
-  function get_comments (
-    p_comments  in blob
-  )
-  return ExcelTableCellList
-  is
-    stream       Stream_T;
-    commentList  ExcelTableCellList := ExcelTableCellList();
-  begin
-    stream := open_stream(p_comments);
-    read_CommentList(stream, commentList);
-    close_stream(stream);
-    return commentList;
-  end;
-  
+    
 
   /*function get_rows (
     p_sheet_part  in blob 
@@ -1024,25 +1027,6 @@ create or replace package body xutl_xlsb is
     return;
     
   end;*/
-
-  /*
-  function get_sheetRelId (
-    p_workbook   in blob
-  , p_sheetName  in varchar2
-  )
-  return varchar2
-  is
-    stream    Stream_T;
-    sheetMap  SheetRelMap_T;
-    relId     varchar2(255 char);
-  begin
-    stream := open_stream(p_workbook);
-    read_SheetMap(stream, sheetMap);
-    relId := sheetMap(p_sheetName);
-    close_stream(stream);
-    return relId;
-  end;
-  */
 
 begin
   

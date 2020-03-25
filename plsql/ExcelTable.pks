@@ -3,7 +3,7 @@ create or replace package ExcelTable is
 
   MIT License
 
-  Copyright (c) 2016-2019 Marc Bleron
+  Copyright (c) 2016-2020 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -60,6 +60,9 @@ create or replace package ExcelTable is
                                            empty cells
     Marc Bleron       2019-09-26     Fix : Error when using FOR ORDINALITY with a 
                                            positional text data source
+    Marc Bleron       2019-10-02     Added strict OOXML support
+    Marc Bleron       2019-11-03     Added streaming read method for ODF spreadsheets
+    Marc Bleron       2020-02-29     Added cellNote attribute to ExcelTableCell
 ====================================================================================== */
 
   -- Read methods  
@@ -236,13 +239,13 @@ create or replace package ExcelTable is
   return anydataset pipelined
   using ExcelTableImpl;
 
-  function getCells (
-    p_file     in blob
-  , p_sheet    in anydata
-  , p_cols     in varchar2
-  , p_range    in varchar2 default null
-  , p_method   in binary_integer default DOM_READ
-  , p_password in varchar2 default null
+  function getRawCells (
+    p_file         in blob
+  , p_sheetFilter  in anydata
+  , p_cols         in varchar2
+  , p_range        in varchar2 default null
+  , p_method       in binary_integer default DOM_READ
+  , p_password     in varchar2 default null
   )
   return ExcelTableCellList pipelined;
   

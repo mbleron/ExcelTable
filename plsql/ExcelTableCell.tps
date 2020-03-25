@@ -4,5 +4,6 @@ create or replace type ExcelTableCell as object (
 , cellType  varchar2(10)
 , cellData  anydata
 , sheetIdx  integer
+, cellNote  varchar2(32767)
 )
 /

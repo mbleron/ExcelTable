@@ -3,7 +3,7 @@ create or replace package xutl_xlsb is
 
   MIT License
 
-  Copyright (c) 2018-2019 Marc Bleron
+  Copyright (c) 2018-2020 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -29,6 +29,7 @@ create or replace package xutl_xlsb is
     Marc Bleron       2018-08-23     Bug fix : no row returned if fetch_size (p_nrows)
                                      is less than first row index
     Marc Bleron       2018-09-02     Multi-sheet support
+    Marc Bleron       2020-03-01     Added cellNote attribute to ExcelTableCell
 ====================================================================================== */
   
   type SheetEntry_T is record (name varchar2(31 char), relId varchar2(255 char));
@@ -45,8 +46,9 @@ create or replace package xutl_xlsb is
   return pls_integer;
 
   procedure add_sheet (
-    p_ctx_id   in pls_integer
-  , p_content  in blob
+    p_ctx_id    in pls_integer
+  , p_content   in blob
+  , p_comments  in blob
   );
   
   function get_sheetEntries (
@@ -63,21 +65,6 @@ create or replace package xutl_xlsb is
   , p_nrows   in pls_integer
   )
   return ExcelTableCellList;
-
-  function get_comments (
-    p_comments  in blob
-  )
-  return ExcelTableCellList;
-  
-/*  function get_rows (
-    p_sheet_part  in blob 
-  , p_sst_part    in blob
-  , p_cols        in varchar2 default null
-  , p_firstRow    in pls_integer default null
-  , p_lastRow     in pls_integer default null
-  )
-  return ExcelTableCellList
-  pipelined;*/
 
 end xutl_xlsb;
 /
