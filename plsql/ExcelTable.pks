@@ -322,5 +322,11 @@ create or replace package ExcelTable is
     p_ctx_id  in binary_integer
   );
   
+  function getSheets (
+    p_file         in blob
+  , p_password     in varchar2 default null
+  )
+  return ExcelTableSheetList pipelined;
+  
 end ExcelTable;
 /

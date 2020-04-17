@@ -216,7 +216,8 @@ See the following sections for more examples and detailed description of ExcelTa
 * [createDMLContext](#createdmlcontext-function)  
 * [mapColumn](#mapcolumn-procedure)  
 * [mapColumnWithDefault](#mapcolumnwithdefault-procedure)  
-* [loadData](#loaddata-function)  
+* [loadData](#loaddata-function)
+* [getSheets](#getsheets-function)  
 ---
 
 ### getRows Function
@@ -622,6 +623,22 @@ begin
 end;
   
 ```
+### getSheets function
+This is a pipelined function returning the sheet names from the input spreadsheet file.  
+
+```sql
+function getSheets (
+  p_file         in blob
+, p_password     in varchar2 default null
+)
+return ExcelTableSheetList pipelined;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_file`|Cf. [getRows](#getrows-function) function|Yes
+`p_password`|Cf. [getRows](#getrows-function) function|No
+
 
 ## 
 #### Columns syntax specification
