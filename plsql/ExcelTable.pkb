@@ -5132,9 +5132,8 @@ where t.id = :1
     -- copied from getRawCells
   
     set_nls_cache;
-    -- get all columns (till XFD for Excel 2019)
-    -- For XLS files XFD is too large (raises error in XUTL_XLS) but ZZ works.
-    ctx_id := QI_initContext(p_range => null, p_cols => 'A-ZZ', p_method => DOM_READ, p_parse_options => PARSE_SIMPLE);
+    -- get just the first cell since that is enough to get all sheets
+    ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => DOM_READ, p_parse_options => PARSE_SIMPLE);
     sheet_pattern_enabled := true;
     -- get all sheets using the regular expression .*
     openSpreadsheet(p_file, p_password, anydata.ConvertVarchar2('.*'), ctx_id);
