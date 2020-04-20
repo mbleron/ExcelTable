@@ -5118,8 +5118,6 @@ where t.id = :1
   return ExcelTableSheetList pipelined
   is
     ctx_id  binary_integer;
-    cells   ExcelTableCellList;
-    sheets  ExcelTableSheetList := ExcelTableSheetList();
     old_sheet_pattern_enabled constant boolean := sheet_pattern_enabled;
 
     procedure cleanup
@@ -5137,72 +5135,9 @@ where t.id = :1
     sheet_pattern_enabled := true;
     -- get all sheets using the regular expression .*
     openSpreadsheet(p_file, p_password, anydata.ConvertVarchar2('.*'), ctx_id);
-    
-    while not ctx_cache(ctx_id).done loop
-      case ctx_cache(ctx_id).file_type
-      when FILE_XLSX then
-        case ctx_cache(ctx_id).read_method
-        when DOM_READ then
-          cells := getCells_DOM(ctx_id, fetch_size);
-        when STREAM_READ then
-          cells := StAX_iterateContext(ctx_cache(ctx_id).extern_key, fetch_size);
-          ctx_cache(ctx_id).done := ( cells is empty );
-        end case;
-      when FILE_XLSB then
-        cells := xutl_xlsb.iterate_context(ctx_cache(ctx_id).extern_key, fetch_size);
-        ctx_cache(ctx_id).done := ( cells is null );
-      when FILE_XLS then
-        cells := xutl_xls.iterate_context(ctx_cache(ctx_id).extern_key, fetch_size);
-        ctx_cache(ctx_id).done := ( cells is empty );
-      when FILE_ODS then
-        case ctx_cache(ctx_id).read_method
-        when DOM_READ then
-          cells := getCells_ODS(ctx_id, fetch_size);
-        when STREAM_READ then
-          cells := StAX_iterateContext(ctx_cache(ctx_id).extern_key, fetch_size);
-          ctx_cache(ctx_id).done := ( cells is empty );
-        end case;
-        
-      when FILE_XSS then
-        cells := getCells_XSS(ctx_id, fetch_size);
-        
-      end case;
-      
-      if not(cells is null or cells is empty) then
-        for i in 1 .. cells.count loop
-          if cells(i).sheetIdx >= 1
-          then
-            null;
-          else
-            error('sheetIdx (%s) should be at least 1', cells(i).sheetIdx);
-          end if;
 
-          if cells(i).sheetIdx = ctx_cache(ctx_id).sheets(cells(i).sheetIdx).idx
-          then
-            null;
-          else
-            error('sheetIdx (%s) should be equal to cached sheet idx (%s)', cells(i).sheetIdx, ctx_cache(ctx_id).sheets(cells(i).sheetIdx).idx);
-          end if;
-
-          -- does the sheet exist and not null: if not extend and set its name
-          if not(sheets.exists(cells(i).sheetIdx)) or sheets(cells(i).sheetIdx) is null
-          then
-            <<extend_loop>>
-            while not(sheets.exists(cells(i).sheetIdx))
-            loop
-              sheets.extend(1);
-              sheets(sheets.last) := null;
-            end loop extend_loop;
-
-            sheets(cells(i).sheetIdx) := ctx_cache(ctx_id).sheets(cells(i).sheetIdx).name;
-          end if;
-        end loop;
-      end if;
-      
-    end loop;
-
-    for i in 1 .. sheets.count loop
-      pipe row (sheets(i));
+    for i in 1 .. ctx_cache(ctx_id).sheets.count loop
+      pipe row (ctx_cache(ctx_id).sheets(i).name);
     end loop;
     
     cleanup;
