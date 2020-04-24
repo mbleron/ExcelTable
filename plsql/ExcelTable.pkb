@@ -5131,7 +5131,13 @@ where t.id = :1
   
     set_nls_cache;
     -- get just the first cell since that is enough to get all sheets
-    ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => DOM_READ, p_parse_options => PARSE_SIMPLE);
+    begin
+      ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => STREAM_READ, p_parse_options => PARSE_SIMPLE);
+    exception
+      when others
+      then
+        ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => DOM_READ, p_parse_options => PARSE_SIMPLE);
+    end;
     sheet_pattern_enabled := true;
     -- get all sheets using the regular expression .*
     openSpreadsheet(p_file, p_password, anydata.ConvertVarchar2('.*'), ctx_id);
