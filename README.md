@@ -19,7 +19,7 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 
 
 ## What's New in...
-> Version 5.0 : 
+> Version 5.0 :  
 > Support for strict OOXML documents  
 > Streaming read method for ODF files  
 > Raw cells listing  
@@ -234,11 +234,11 @@ See the following sections for more examples and detailed description of ExcelTa
 * [setFetchSize](#setfetchsize-procedure)  
 * [useSheetPattern](#usesheetpattern-procedure)  
 * [getCursor](#getcursor-function)  
+* [getSheets](#getsheets-function)  
 * [createDMLContext](#createdmlcontext-function)  
 * [mapColumn](#mapcolumn-procedure)  
 * [mapColumnWithDefault](#mapcolumnwithdefault-procedure)  
-* [loadData](#loaddata-function)
-* [getSheets](#getsheets-function)  
+* [loadData](#loaddata-function)  
 ---
 
 ### getRows Function
@@ -440,6 +440,23 @@ return sys_refcursor;
 ```
 getCursor() returns a REF cursor allowing the consumer to iterate through the resultset returned by the equivalent [getRows](#getrows-function) call.  
 It may be useful in PL/SQL code (prior 18c) where static reference to table function returning ANYDATASET is not supported.  
+
+---
+### getSheets function
+This is a pipelined function returning the sheet names from the input spreadsheet file.  
+
+```sql
+function getSheets (
+  p_file         in blob
+, p_password     in varchar2 default null
+)
+return ExcelTableSheetList pipelined;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_file`|Cf. [getRows](#getrows-function) function|Yes
+`p_password`|Cf. [getRows](#getrows-function) function|No
 
 ---
 ### DML API
@@ -645,21 +662,6 @@ begin
 end;
   
 ```
-### getSheets function
-This is a pipelined function returning the sheet names from the input spreadsheet file.  
-
-```sql
-function getSheets (
-  p_file         in blob
-, p_password     in varchar2 default null
-)
-return ExcelTableSheetList pipelined;
-```
-
-Parameter|Description|Mandatory
----|---|---
-`p_file`|Cf. [getRows](#getrows-function) function|Yes
-`p_password`|Cf. [getRows](#getrows-function) function|No
 
 
 ## 
@@ -1311,7 +1313,7 @@ FROM Table(
 
 ## CHANGELOG
 
-### 5.x.y (2020-04-17)
+### 5.1 (2020-04-17)
 * Enhancements :
 	* added getSheets function
 	* documentation links updated for procedure loadData
