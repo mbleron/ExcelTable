@@ -77,13 +77,34 @@ The owner requires the CREATE TABLE privilege in this case :
 ```sql
 grant create table to <user>;
 ```
-
+---  
 In order to read encrypted files, the interface requires access to the DBMS_CRYPTO API (see PL/SQL section below).  
 The owner must therefore be granted EXECUTE privilege on it : 
 ```sql
 grant execute on sys.dbms_crypto to <user>;
 ```
-
+---  
+ExcelTable requires CURSOR_SHARING parameter set to EXACT, otherwise one may receive the following error when using ODCI-based function getRows() : 
+```
+PLS-00307: too many declarations of 'ODCITABLEDESCRIBE' match this call
+```
+The current value can be checked using this query : 
+```sql
+select value from v$parameter where name = 'cursor_sharing';
+```
+If the value is not 'EXACT' then it can be changed at system or session level using the corresponding ALTER SYSTEM/SESSION command, e.g.
+```sql
+alter session set cursor_sharing = exact;
+```
+If this change is not possible, the workaround is to override the parameter at query level via a hint : 
+```
+select /*+ cursor_sharing_exact */ t.*
+from table(
+       ExcelTable.getRows( ... )
+     ) t
+;
+```
+  
 
 ### PL/SQL
 
