@@ -237,7 +237,8 @@ See the following sections for more examples and detailed description of ExcelTa
 * [createDMLContext](#createdmlcontext-function)  
 * [mapColumn](#mapcolumn-procedure)  
 * [mapColumnWithDefault](#mapcolumnwithdefault-procedure)  
-* [loadData](#loaddata-function)  
+* [loadData](#loaddata-function)
+* [getSheets](#getsheets-function)  
 ---
 
 ### getRows Function
@@ -483,11 +484,12 @@ procedure mapColumn (
 );
 ```
 mapColumn() associates a column from the target table to a column reference from the spreadsheet file.
+The column will be looked up in ALL_TAB_COLUMNS using an exact match, hence the column name is case sensitive.
 
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
-`p_col_name`|Column name from the target table.|Yes
+`p_col_name`|Column name (case sensitive) from the target table.|Yes
 `p_col_ref`|Column reference (A, B, C, ...), or field position reference (start:end).<br/>If set to NULL, the target column will be loaded with the default value `p_default`.|No
 `p_format`|Date or timestamp format mask, same as `FORMAT` clause in the [column list](#columns-syntax-specification) of [getRows](#getrows-function) function.|No
 `p_meta`|Metadata clause. <br/>One of `META_ORDINALITY`, `META_COMMENT`, `META_SHEET_NAME`, or `META_SHEET_INDEX`, same as `FOR ORDINALITY` and `FOR METADATA` clauses in the [column list](#columns-syntax-specification).|No
@@ -606,16 +608,16 @@ An optional error logging clause is available.
 Parameter|Description|Mandatory
 ---|---|---
 `p_ctx`|DMLContext value, as returned by a previous call to [createDMLContext](#createdmlcontext-function) function.|Yes
-`p_file`|Cf. [getRows](getrows-function) function|Yes
-`p_sheet`|Cf. [getRows](getrows-function) function|Yes
-`p_sheets`|Cf. [getRows](getrows-function) function|Yes
-`p_range`|Cf. [getRows](getrows-function) function|No
-`p_method`|Cf. [getRows](getrows-function) function|No
-`p_password`|Cf. [getRows](getrows-function) function|No
-`p_skip`|Cf. [getRows](getrows-function) function|Yes
-`p_line_term`|Cf. [getRows](getrows-function) function|Yes
-`p_field_sep`|Cf. [getRows](getrows-function) function|No
-`p_text_qual`|Cf. [getRows](getrows-function) function|No
+`p_file`|Cf. [getRows](#getrows-function) function|Yes
+`p_sheet`|Cf. [getRows](#getrows-function) function|Yes
+`p_sheets`|Cf. [getRows](#getrows-function) function|Yes
+`p_range`|Cf. [getRows](#getrows-function) function|No
+`p_method`|Cf. [getRows](#getrows-function) function|No
+`p_password`|Cf. [getRows](#getrows-function) function|No
+`p_skip`|Cf. [getRows](#getrows-function) function|Yes
+`p_line_term`|Cf. [getRows](#getrows-function) function|Yes
+`p_field_sep`|Cf. [getRows](#getrows-function) function|No
+`p_text_qual`|Cf. [getRows](#getrows-function) function|No
 `p_dml_type`|DML context type, one of `DML_INSERT`, `DML_UPDATE`, `DML_MERGE` or `DML_DELETE`. Default is DML_INSERT.|No
 `p_err_log`|A text-literal [DML error logging](https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/INSERT.html#GUID-903F8043-0254-4EE9-ACC1-CB8AC0AF3423) clause, to capture exceptions during load.|No
 
@@ -643,6 +645,22 @@ begin
 end;
   
 ```
+### getSheets function
+This is a pipelined function returning the sheet names from the input spreadsheet file.  
+
+```sql
+function getSheets (
+  p_file         in blob
+, p_password     in varchar2 default null
+)
+return ExcelTableSheetList pipelined;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_file`|Cf. [getRows](#getrows-function) function|Yes
+`p_password`|Cf. [getRows](#getrows-function) function|No
+
 
 ## 
 #### Columns syntax specification
@@ -1292,6 +1310,12 @@ FROM Table(
 ```
 
 ## CHANGELOG
+
+### 5.x.y (2020-04-17)
+* Enhancements :
+	* added getSheets function
+	* documentation links updated for procedure loadData
+	* documentation for mapColumn mentions now that the column name is case sensitive
 
 ### 5.0 (2020-03-25)
 * Fix : issue #18 

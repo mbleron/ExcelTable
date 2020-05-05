@@ -5111,6 +5111,50 @@ where t.id = :1
     
   end;
   
+  function getSheets (
+    p_file         in blob
+  , p_password     in varchar2 default null
+  )
+  return ExcelTableSheetList pipelined
+  is
+    ctx_id  binary_integer;
+    old_sheet_pattern_enabled constant boolean := sheet_pattern_enabled;
+
+    procedure cleanup
+    is
+    begin
+      sheet_pattern_enabled := old_sheet_pattern_enabled;
+      tableClose(ctx_id);      
+    end cleanup;
+  begin
+    -- copied from getRawCells
+  
+    set_nls_cache;
+    -- get just the first cell since that is enough to get all sheets
+    begin
+      ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => STREAM_READ, p_parse_options => PARSE_SIMPLE);
+    exception
+      when others
+      then
+        ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => DOM_READ, p_parse_options => PARSE_SIMPLE);
+    end;
+    sheet_pattern_enabled := true;
+    -- get all sheets using the regular expression .*
+    openSpreadsheet(p_file, p_password, anydata.ConvertVarchar2('.*'), ctx_id);
+
+    for i in 1 .. ctx_cache(ctx_id).sheets.count loop
+      pipe row (ctx_cache(ctx_id).sheets(i).name);
+    end loop;
+    
+    cleanup;
+    
+    return;
+  exception
+    when others
+    then
+      cleanup;
+      raise;
+  end getSheets;
 
   begin
     
