@@ -1313,6 +1313,9 @@ FROM Table(
 
 ## CHANGELOG
 
+### 5.1.1 (2021-02-12)
+* Fix : issue #26
+
 ### 5.1 (2020-04-17)
 * Enhancements :
 	* added getSheets function
@@ -1409,4 +1412,4 @@ FROM Table(
 
 ## Copyright and license
 
-Copyright 2016-2020 Marc Bleron. Released under MIT license.
+Copyright 2016-2021 Marc Bleron. Released under MIT license.
