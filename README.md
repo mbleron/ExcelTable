@@ -19,7 +19,7 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 
 
 ## What's New in...
-> Version 5.0 : 
+> Version 5.0 :  
 > Support for strict OOXML documents  
 > Streaming read method for ODF files  
 > Raw cells listing  
@@ -77,13 +77,34 @@ The owner requires the CREATE TABLE privilege in this case :
 ```sql
 grant create table to <user>;
 ```
-
+---  
 In order to read encrypted files, the interface requires access to the DBMS_CRYPTO API (see PL/SQL section below).  
 The owner must therefore be granted EXECUTE privilege on it : 
 ```sql
 grant execute on sys.dbms_crypto to <user>;
 ```
-
+---  
+ExcelTable requires CURSOR_SHARING parameter set to EXACT, otherwise one may receive the following error when using ODCI-based function getRows() : 
+```
+PLS-00307: too many declarations of 'ODCITABLEDESCRIBE' match this call
+```
+The current value can be checked using this query : 
+```sql
+select value from v$parameter where name = 'cursor_sharing';
+```
+If the value is not 'EXACT' then it can be changed at system or session level using the corresponding ALTER SYSTEM/SESSION command, e.g.
+```sql
+alter session set cursor_sharing = exact;
+```
+If this change is not possible, the workaround is to override the parameter at query level via a hint : 
+```
+select /*+ cursor_sharing_exact */ t.*
+from table(
+       ExcelTable.getRows( ... )
+     ) t
+;
+```
+  
 
 ### PL/SQL
 
@@ -213,11 +234,12 @@ See the following sections for more examples and detailed description of ExcelTa
 * [setFetchSize](#setfetchsize-procedure)  
 * [useSheetPattern](#usesheetpattern-procedure)  
 * [getCursor](#getcursor-function)  
+* [getSheets](#getsheets-function)  
+* [isReadMethodAvailable](#isreadmethodavailable-function)
 * [createDMLContext](#createdmlcontext-function)  
 * [mapColumn](#mapcolumn-procedure)  
 * [mapColumnWithDefault](#mapcolumnwithdefault-procedure)  
 * [loadData](#loaddata-function)
-* [getSheets](#getsheets-function)  
 ---
 
 ### getRows Function
@@ -421,6 +443,45 @@ getCursor() returns a REF cursor allowing the consumer to iterate through the re
 It may be useful in PL/SQL code (prior 18c) where static reference to table function returning ANYDATASET is not supported.  
 
 ---
+### getSheets function
+This is a pipelined function returning the sheet names from the input spreadsheet file.  
+
+```sql
+function getSheets (
+  p_file         in blob
+, p_password     in varchar2 default null
+, p_method       in binary_integer default DOM_READ
+)
+return ExcelTableSheetList pipelined;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_file`|Cf. [getRows](#getrows-function) function|Yes
+`p_password`|Cf. [getRows](#getrows-function) function|No
+`p_method`|Cf. [getRows](#getrows-function) function|No
+
+---
+### isReadMethodAvailable function
+
+The read method ExcelTable.DOM_READ is available by default but other methods
+may depend on the Java classes being installed. In the Oracle Cloud, Java is
+not even supported so for the calling program it may be usefull to verify
+which read method is available in order to prevent run-time errors due to the
+fact that the Java classes are not installed.
+
+```sql
+function isReadMethodAvailable (
+  p_method in binary_integer
+)
+return boolean;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_method`|Cf. [getRows](#getrows-function) function|Yes
+
+---
 ### DML API
 ### createDMLContext function 
 ```sql
@@ -449,7 +510,6 @@ begin
   
 ```
 <br/>
-
 ### mapColumn procedure
 ```sql
 procedure mapColumn (
@@ -624,23 +684,7 @@ begin
 end;
   
 ```
-### getSheets function
-This is a pipelined function returning the sheet names from the input spreadsheet file.  
-
-```sql
-function getSheets (
-  p_file         in blob
-, p_password     in varchar2 default null
-)
-return ExcelTableSheetList pipelined;
-```
-
-Parameter|Description|Mandatory
----|---|---
-`p_file`|Cf. [getRows](#getrows-function) function|Yes
-`p_password`|Cf. [getRows](#getrows-function) function|No
-
-
+---
 ## 
 #### Columns syntax specification
 
@@ -1290,7 +1334,11 @@ FROM Table(
 
 ## CHANGELOG
 
-### 5.x.y (2020-04-17)
+### 5.1.1 (2021-02-12)
+* Fix : issue #26
+
+### 5.1 (2020-04-17)
+
 * Enhancements :
 	* added getSheets function
 	* documentation links updated for procedure loadData
@@ -1386,4 +1434,4 @@ FROM Table(
 
 ## Copyright and license
 
-Copyright 2016-2020 Marc Bleron. Released under MIT license.
+Copyright 2016-2021 Marc Bleron. Released under MIT license.

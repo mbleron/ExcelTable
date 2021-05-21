@@ -3,7 +3,7 @@ create or replace package ExcelTable is
 
   MIT License
 
-  Copyright (c) 2016-2020 Marc Bleron
+  Copyright (c) 2016-2021 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -63,6 +63,8 @@ create or replace package ExcelTable is
     Marc Bleron       2019-10-02     Added strict OOXML support
     Marc Bleron       2019-11-03     Added streaming read method for ODF spreadsheets
     Marc Bleron       2020-02-29     Added cellNote attribute to ExcelTableCell
+    Marc Bleron       2021-02-12     Fix : wrong value for cells containing an empty 
+                                           shared string
 ====================================================================================== */
 
   -- Read methods  
@@ -325,8 +327,14 @@ create or replace package ExcelTable is
   function getSheets (
     p_file         in blob
   , p_password     in varchar2 default null
+  , p_method       in binary_integer default DOM_READ
   )
   return ExcelTableSheetList pipelined;
+
+  function isReadMethodAvailable (
+    p_method in binary_integer
+  )
+  return boolean;
   
 end ExcelTable;
 /

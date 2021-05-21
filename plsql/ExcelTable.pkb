@@ -3249,6 +3249,7 @@ where t.id = :1
         info.cellCol := rtrim(info.cellRef, DIGITS);
         info.cellRow := ltrim(info.cellRef, LETTERS);
         str := null;
+        cell.cellData := null;
         
         if refSet.exists(info.cellCol) then
 
@@ -3266,8 +3267,6 @@ where t.id = :1
           if info.cellType is null or info.cellType = 'n' then
             if info.cellValue is not null then
               cell.cellData := anydata.ConvertNumber(to_number(replace(info.cellValue,'.',get_decimal_sep)));
-            else
-              cell.cellData := null;
             end if;
             
           elsif info.cellType = 's' then
@@ -5114,6 +5113,7 @@ where t.id = :1
   function getSheets (
     p_file         in blob
   , p_password     in varchar2 default null
+  , p_method       in binary_integer default DOM_READ
   )
   return ExcelTableSheetList pipelined
   is
@@ -5131,13 +5131,7 @@ where t.id = :1
   
     set_nls_cache;
     -- get just the first cell since that is enough to get all sheets
-    begin
-      ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => STREAM_READ, p_parse_options => PARSE_SIMPLE);
-    exception
-      when others
-      then
-        ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => DOM_READ, p_parse_options => PARSE_SIMPLE);
-    end;
+    ctx_id := QI_initContext(p_range => 'A1:A1', p_cols => 'A', p_method => p_method, p_parse_options => PARSE_SIMPLE);
     sheet_pattern_enabled := true;
     -- get all sheets using the regular expression .*
     openSpreadsheet(p_file, p_password, anydata.ConvertVarchar2('.*'), ctx_id);
@@ -5155,6 +5149,42 @@ where t.id = :1
       cleanup;
       raise;
   end getSheets;
+
+  function isReadMethodAvailable (
+    p_method in binary_integer
+  )
+  return boolean
+  is
+    l_result boolean := null;
+  begin
+    case
+      when p_method = DOM_READ
+      then l_result := true;
+      when p_method in (STREAM_READ, STREAM_READ_XDB)
+      then
+        -- try to close a null context: should fail due to a null pointer exception
+        begin
+          StAX_closeContext(null);
+          raise program_error; -- should not come here
+        exception
+          when others
+          then
+            -- Possible exceptions:
+            --
+            -- ORA-29532: Java call terminated by uncaught Java exception: java.lang.NullPointerException
+            -- ORA-29531: no method terminate in class db/office/spreadsheet/ReadContext
+            -- ORA-29540: class db/office/spreadsheet/ReadContext does not exist
+            if sqlerrm like '%java.lang.NullPointerException%'
+            then
+              l_result := true;
+            else
+              l_result := false;
+            end if;
+        end;
+    end case;
+
+    return l_result;
+  end  isReadMethodAvailable;
 
   begin
     
