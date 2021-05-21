@@ -3249,6 +3249,7 @@ where t.id = :1
         info.cellCol := rtrim(info.cellRef, DIGITS);
         info.cellRow := ltrim(info.cellRef, LETTERS);
         str := null;
+        cell.cellData := null;
         
         if refSet.exists(info.cellCol) then
 
@@ -3266,8 +3267,6 @@ where t.id = :1
           if info.cellType is null or info.cellType = 'n' then
             if info.cellValue is not null then
               cell.cellData := anydata.ConvertNumber(to_number(replace(info.cellValue,'.',get_decimal_sep)));
-            else
-              cell.cellData := null;
             end if;
             
           elsif info.cellType = 's' then
