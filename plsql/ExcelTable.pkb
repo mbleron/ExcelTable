@@ -5158,9 +5158,10 @@ where t.id = :1
     l_result boolean := null;
   begin
     case
-      when p_method = DOM_READ
+      -- STREAM_READ_XDB does not require Java, so the the function must always return true in this case.
+      when p_method in (DOM_READ, STREAM_READ_XDB)
       then l_result := true;
-      when p_method in (STREAM_READ, STREAM_READ_XDB)
+      when p_method = STREAM_READ
       then
         -- try to close a null context: should fail due to a null pointer exception
         begin

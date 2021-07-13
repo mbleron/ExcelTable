@@ -1334,6 +1334,11 @@ FROM Table(
 
 ## CHANGELOG
 
+### 5.2.0 (2021-07-13)
+* Enhancements :
+  * added isReadMethodAvailable function
+  * added default parameter p_method to getSheets function (backwards compatible)
+
 ### 5.1.1 (2021-02-12)
 * Fix : issue #26
 
