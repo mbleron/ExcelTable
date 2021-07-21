@@ -235,10 +235,11 @@ See the following sections for more examples and detailed description of ExcelTa
 * [useSheetPattern](#usesheetpattern-procedure)  
 * [getCursor](#getcursor-function)  
 * [getSheets](#getsheets-function)  
+* [isReadMethodAvailable](#isreadmethodavailable-function)
 * [createDMLContext](#createdmlcontext-function)  
 * [mapColumn](#mapcolumn-procedure)  
 * [mapColumnWithDefault](#mapcolumnwithdefault-procedure)  
-* [loadData](#loaddata-function)  
+* [loadData](#loaddata-function)
 ---
 
 ### getRows Function
@@ -449,6 +450,7 @@ This is a pipelined function returning the sheet names from the input spreadshee
 function getSheets (
   p_file         in blob
 , p_password     in varchar2 default null
+, p_method       in binary_integer default DOM_READ
 )
 return ExcelTableSheetList pipelined;
 ```
@@ -457,6 +459,27 @@ Parameter|Description|Mandatory
 ---|---|---
 `p_file`|Cf. [getRows](#getrows-function) function|Yes
 `p_password`|Cf. [getRows](#getrows-function) function|No
+`p_method`|Cf. [getRows](#getrows-function) function|No
+
+---
+### isReadMethodAvailable function
+
+The read method ExcelTable.DOM_READ is available by default but other methods
+may depend on the Java classes being installed. In the Oracle Cloud, Java is
+not even supported so for the calling program it may be usefull to verify
+which read method is available in order to prevent run-time errors due to the
+fact that the Java classes are not installed.
+
+```sql
+function isReadMethodAvailable (
+  p_method in binary_integer
+)
+return boolean;
+```
+
+Parameter|Description|Mandatory
+---|---|---
+`p_method`|Cf. [getRows](#getrows-function) function|Yes
 
 ---
 ### DML API
@@ -487,7 +510,6 @@ begin
   
 ```
 <br/>
-
 ### mapColumn procedure
 ```sql
 procedure mapColumn (
@@ -662,8 +684,7 @@ begin
 end;
   
 ```
-
-
+---
 ## 
 #### Columns syntax specification
 
@@ -1313,10 +1334,16 @@ FROM Table(
 
 ## CHANGELOG
 
+### 5.2.0 (2021-07-13)
+* Enhancements :
+  * added isReadMethodAvailable function
+  * added default parameter p_method to getSheets function (backwards compatible)
+
 ### 5.1.1 (2021-02-12)
 * Fix : issue #26
 
 ### 5.1 (2020-04-17)
+
 * Enhancements :
 	* added getSheets function
 	* documentation links updated for procedure loadData

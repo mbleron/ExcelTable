@@ -327,8 +327,14 @@ create or replace package ExcelTable is
   function getSheets (
     p_file         in blob
   , p_password     in varchar2 default null
+  , p_method       in binary_integer default DOM_READ
   )
   return ExcelTableSheetList pipelined;
+
+  function isReadMethodAvailable (
+    p_method in binary_integer
+  )
+  return boolean;
   
 end ExcelTable;
 /
