@@ -737,6 +737,12 @@ create or replace package body xutl_xls is
       case frml.byte1
       when FT_STRING then
         next_record(stream);
+        
+        -- optionally, next record might be an Array, Table or ShrFmla record
+        if stream.rec.rt != RT_STRING then
+          next_record(stream);
+        end if;
+        
         expect(stream, RT_STRING);
         str := read_XLString(stream, ST_UNISTR);
         
@@ -915,6 +921,7 @@ create or replace package body xutl_xls is
             skip(stream, 2); -- ixfe
             num := read_RK(stream);
             add_cell(anydata.ConvertNumber(num));
+            --debug(utl_lms.format_message('[%d,%d]=%s', rw+1, col+1, rawtohex(stream.rec.rt)));
             col := col + 1;
           end loop;
           
@@ -924,6 +931,7 @@ create or replace package body xutl_xls is
           cnt := (stream.rec.sz - 6)/2;
           for i in 1 .. cnt loop
             skip(stream, 2); -- ixfe
+            --debug(utl_lms.format_message('[%d,%d]=%s', rw+1, col+1, rawtohex(stream.rec.rt)));
             col := col + 1;
           end loop;      
         
@@ -966,10 +974,10 @@ create or replace package body xutl_xls is
           else
             null;
           end case;
+          
+          --debug(utl_lms.format_message('[%d,%d]=%s', rw+1, col+1, rawtohex(stream.rec.rt)));
         
         end case;
-        
-        --debug(utl_lms.format_message('[%d,%d]=%s', rw+1, col+1, rawtohex(stream.rec.rt)));
         
       end loop;
     
@@ -1002,7 +1010,7 @@ create or replace package body xutl_xls is
     
     for i in 1 .. sst.cstUnique loop
       sst.strings(i) := read_XLString(stream, ST_RICHUNISTR);
-      
+      --debug(i ||':'|| sst.strings(i).strvalue);
       if stream.rec.available = 0 then
         next_record(stream);
       end if;

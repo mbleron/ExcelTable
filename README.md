@@ -1334,6 +1334,9 @@ FROM Table(
 
 ## CHANGELOG
 
+### 5.2.1 (2021-08-09)
+* Fix : issue #33
+
 ### 5.2.0 (2021-07-13)
 * Enhancements :
   * added isReadMethodAvailable function

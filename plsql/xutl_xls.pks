@@ -3,7 +3,7 @@ create or replace package xutl_xls is
 
   MIT License
 
-  Copyright (c) 2018-2020 Marc Bleron
+  Copyright (c) 2018-2021 Marc Bleron
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -32,6 +32,7 @@ create or replace package xutl_xls is
     Marc Bleron       2020-02-28     Added cellNote attribute to ExcelTableCell
     Marc Bleron       2020-03-08     Added BoolErr record handling
     Marc Bleron       2020-03-11     Added RC4 CryptoAPI support
+    Marc Bleron       2021-08-09     Fix: reading Formula with optional ShrFmla record
 ====================================================================================== */
   
   procedure set_debug (p_mode in boolean);
