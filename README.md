@@ -510,6 +510,7 @@ begin
   
 ```
 <br/>
+
 ### mapColumn procedure
 ```sql
 procedure mapColumn (
@@ -1333,6 +1334,9 @@ FROM Table(
 ```
 
 ## CHANGELOG
+
+### 5.2.2 (2021-08-20)
+* Enhancement : issue #34
 
 ### 5.2.1 (2021-08-09)
 * Fix : issue #33

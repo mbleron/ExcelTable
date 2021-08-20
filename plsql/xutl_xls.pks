@@ -33,6 +33,7 @@ create or replace package xutl_xls is
     Marc Bleron       2020-03-08     Added BoolErr record handling
     Marc Bleron       2020-03-11     Added RC4 CryptoAPI support
     Marc Bleron       2021-08-09     Fix: reading Formula with optional ShrFmla record
+    Marc Bleron       2021-08-20     Workaround for bad SST.cstUnique value
 ====================================================================================== */
   
   procedure set_debug (p_mode in boolean);

@@ -1010,9 +1010,12 @@ create or replace package body xutl_xls is
     
     for i in 1 .. sst.cstUnique loop
       sst.strings(i) := read_XLString(stream, ST_RICHUNISTR);
-      --debug(i ||':'|| sst.strings(i).strvalue);
+      
       if stream.rec.available = 0 then
         next_record(stream);
+        -- workaround if cstUnique is not set correctly :
+        -- force exiting the loop when something else than a Continue record is encountered
+        exit when stream.rec.rt != RT_CONTINUE;
       end if;
       
     end loop;
