@@ -9,25 +9,25 @@ prompt Creating package XUTL_OFFCRYPTO ...
 @@MSUtilities/OfficeCrypto/xutl_offcrypto.pkb
 
 prompt Creating type ExcelTableSheetList ...
-@@plsql/ExcelTableSheetList.tps
+@@ExcelCommons/plsql/ExcelTableSheetList.tps
 
 prompt Creating type ExcelTableCell ...
-@@plsql/ExcelTableCell.tps
+@@ExcelCommons/plsql/ExcelTableCell.tps
 
 prompt Creating type ExcelTableCellList ...
-@@plsql/ExcelTableCellList.tps
+@@ExcelCommons/plsql/ExcelTableCellList.tps
 
 prompt Creating package XUTL_XLS ...
-@@plsql/xutl_xls.pks
-@@plsql/xutl_xls.pkb
+@@ExcelCommons/plsql/xutl_xls.pks
+@@ExcelCommons/plsql/xutl_xls.pkb
 
 prompt Creating package XUTL_XLSB ...
-@@plsql/xutl_xlsb.pks
-@@plsql/xutl_xlsb.pkb
+@@ExcelCommons/plsql/xutl_xlsb.pks
+@@ExcelCommons/plsql/xutl_xlsb.pkb
 
 prompt Creating package XUTL_FLATFILE ...
-@@plsql/xutl_flatfile.pks
-@@plsql/xutl_flatfile.pkb
+@@ExcelCommons/plsql/xutl_flatfile.pks
+@@ExcelCommons/plsql/xutl_flatfile.pkb
 
 prompt Creating type ExcelTableImpl ...
 @@plsql/ExcelTableImpl.tps

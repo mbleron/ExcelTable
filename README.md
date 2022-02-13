@@ -58,12 +58,12 @@ Please create an issue [here](https://github.com/mbleron/ExcelTable/issues).
 
 Clone this repository or download it as a zip archive.
 
-[MSUtilities](https://github.com/mbleron/MSUtilities) dependency is now provided as a submodule.
+[ExcelCommons](https://github.com/mbleron/ExcelCommons) and [MSUtilities](https://github.com/mbleron/MSUtilities) dependencies are now provided as submodules.
 
 * If you choose to clone the repository, use the following command to fetch the submodule automatically :  
 `git clone --recurse-submodules https://github.com/mbleron/ExcelTable.git`  
 
-* If you go the download way, please also get [MSUtilities](https://github.com/mbleron/MSUtilities) zip archive and extract the content of the root folder into MSUtilities folder.
+* If you go the download way, please also get [ExcelCommons](https://github.com/mbleron/ExcelCommons) and [MSUtilities](https://github.com/mbleron/MSUtilities) zip archives and extract the content of their root folders into ExcelCommons and MSUtilities folders respectively.
 
 ### Database requirement
 
