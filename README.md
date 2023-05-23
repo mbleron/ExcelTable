@@ -1335,6 +1335,10 @@ FROM Table(
 
 ## CHANGELOG
 
+### 5.3 (2023-05-23)
+
+* Enhancement : Date type detection
+
 ### 5.2.2 (2021-08-20)
 * Enhancement : issue #34
 

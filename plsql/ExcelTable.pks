@@ -65,6 +65,7 @@ create or replace package ExcelTable is
     Marc Bleron       2020-02-29     Added cellNote attribute to ExcelTableCell
     Marc Bleron       2021-02-12     Fix : wrong value for cells containing an empty 
                                            shared string
+    Marc Bleron       2023-05-01     Added date style detection for raw cells
 ====================================================================================== */
 
   -- Read methods  

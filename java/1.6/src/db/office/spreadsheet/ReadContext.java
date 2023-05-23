@@ -81,6 +81,11 @@ public class ReadContext {
 		}
 	}
 	
+	public static void setDateStyles(int key, String fmts) throws CellReaderException {
+		ReadContext ctx = ReadContext.get(key);
+		((OOXCellReaderImpl) ctx.reader).setDateFmts(fmts);
+	}
+	
 	public static void addSheet(int key, int index, Blob content, Blob comments) 
 			throws CellReaderException, SQLException, IOException {
 		ReadContext ctx = ReadContext.get(key);

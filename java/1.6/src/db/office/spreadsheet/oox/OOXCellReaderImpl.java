@@ -22,6 +22,7 @@ import db.office.spreadsheet.CellReaderException;
 import db.office.spreadsheet.CellRef;
 import db.office.spreadsheet.Row;
 import db.office.spreadsheet.Sheet;
+import db.office.spreadsheet.oox.OOXCell.FormatFlags;
 
 public class OOXCellReaderImpl implements CellReader {
 
@@ -31,6 +32,7 @@ public class OOXCellReaderImpl implements CellReader {
 	private static final String TAG_V = "v";
 	private static final String TAG_T = "t";
 	private static final String TAG_R = "r";
+	private static final String TAG_S = "s";
 	
 	private boolean done = false;
 	private int firstRow = 0;
@@ -44,6 +46,7 @@ public class OOXCellReaderImpl implements CellReader {
 	private Iterator<Sheet> sheetIterator = null;
 	private int sheetIndex = 0;
 	private Map<String,String> comments;
+	private Map<Integer, FormatFlags> dateXfMap;
 	
 	public OOXCellReaderImpl(String columnList, int firstRow, int lastRow)
 			throws CellReaderException {
@@ -101,6 +104,18 @@ public class OOXCellReaderImpl implements CellReader {
 	
 	public void readStrings(InputStream is) throws IOException, CellReaderException {
 		strings = SharedStringsHandler.getStrings(is);
+	}
+	
+	public void setDateFmts(String fmts) {
+		dateXfMap = new HashMap<Integer, OOXCell.FormatFlags>();
+		if (fmts != null && !fmts.isEmpty()) {
+			String[] items = fmts.split(",");
+			for (String item : items) {
+				int xfId = Integer.parseInt(item.substring(0, item.indexOf(':')));
+				boolean isTimestamp = ( item.substring(item.indexOf(':') + 1).charAt(0) == '1' );
+				dateXfMap.put(xfId, new OOXCell.FormatFlags(isTimestamp));
+			}
+		}
 	}
 	
 	public List<String> getSheetList() {
@@ -219,6 +234,10 @@ public class OOXCellReaderImpl implements CellReader {
 		
 			String cellTypeAttr = this.reader.getAttributeValue(null, TAG_T);
 			OOXCellType cellType = (cellTypeAttr!=null)?OOXCellType.get(cellTypeAttr):OOXCellType.NUMBER;
+			
+			String cellStyleAttr = this.reader.getAttributeValue(null, TAG_S);
+			int cellStyle = (cellStyleAttr!=null)?Integer.parseInt(cellStyleAttr):0;
+			
 			String cellValue = null;
 
 			switch (cellType) {
@@ -238,7 +257,7 @@ public class OOXCellReaderImpl implements CellReader {
 			}
 
 			if (cellValue != null) {
-				cell = new OOXCell(cellRef, cellValue, cellType, this.sheetIndex);
+				cell = new OOXCell(cellRef, cellValue, cellType, this.sheetIndex, dateXfMap.get(cellStyle));
 				cell.setAnnotation(comments.get(String.valueOf(sheetIndex) + cellRefValue));
 			}
 			

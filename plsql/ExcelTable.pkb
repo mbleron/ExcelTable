@@ -75,6 +75,8 @@ create or replace package body ExcelTable is
   CT_XL_BINARY_FILE      constant varchar2(100) := 'application/vnd.ms-excel.sheet.binary.macroEnabled.main';
   CT_SHAREDSTRINGS_BIN   constant varchar2(100) := 'application/vnd.ms-excel.sharedStrings';
   CT_SHAREDSTRINGS       constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml';
+  CT_STYLES              constant varchar2(100) := 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml';
+  CT_STYLES_BIN          constant varchar2(100) := 'application/vnd.ms-excel.styles';
 
   -- moved to prop_map:
   --SML_NSMAP              constant varchar2(100) := 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
@@ -180,6 +182,8 @@ create or replace package body ExcelTable is
   type t_sheetMap is table of t_sheetEntry index by varchar2(128);
   type t_sheets is table of t_sheet;
   
+  type dateXfMap_t is table of ExcelTypes.CT_NumFmt index by pls_integer;
+  
   type t_workbook is record (
     path            varchar2(260)
   , content         xmltype
@@ -220,6 +224,7 @@ create or replace package body ExcelTable is
   , cellType  varchar2(10)
   , cellValue varchar2(32767)
   , sheetIdx  pls_integer
+  , xfId      pls_integer
   );
   
   type t_dom_reader is record (
@@ -253,6 +258,7 @@ create or replace package body ExcelTable is
   , sheets       t_sheets
   , curr_sheet   pls_integer
   , is_strict    boolean
+  , dt_styles    dateXfMap_t
   );
   
   type t_ctx_cache is table of t_context index by binary_integer;
@@ -1063,24 +1069,6 @@ create or replace package body ExcelTable is
 
 
   function get_date_val (
-    p_value  in number 
-  )
-  return date
-  is
-    l_date    date;
-  begin
-    -- Excel bug workaround : date 1900-02-29 doesn't exist yet Excel stores it at serial #60
-    -- The following skips it and converts to Oracle date correctly
-    if p_value > 60 then
-      l_date := date '1899-12-30' + p_value;
-    elsif p_value < 60 then
-      l_date := date '1899-12-31' + p_value;
-    end if;
-    return l_date;
-  end;
-
-
-  function get_date_val (
     p_value   in varchar2
   , p_format  in varchar2
   )
@@ -1088,24 +1076,6 @@ create or replace package body ExcelTable is
   is
   begin
     return to_date(p_value, nvl(p_format, get_date_format));
-  end;
-
-
-  function get_tstamp_val (
-    p_value  in number 
-  )
-  return timestamp
-  is
-    l_ts  timestamp;
-  begin
-    -- Excel bug workaround : date 1900-02-29 doesn't exist yet Excel stores it at serial #60
-    -- The following skips it and converts to Oracle date correctly
-    if p_value > 60 then
-      l_ts := timestamp '1899-12-30 00:00:00' + numtodsinterval(p_value, 'DAY');
-    elsif p_value < 60 then
-      l_ts := timestamp '1899-12-31 00:00:00' + numtodsinterval(p_value, 'DAY');
-    end if;
-    return l_ts;
   end;
 
 
@@ -2055,6 +2025,9 @@ create or replace package body ExcelTable is
   as language java 
   name 'db.office.spreadsheet.ReadContext.addSheet(int, int, java.sql.Blob, java.sql.Blob)';
 
+  procedure StAX_setDateStyles(key in number, dtStyles in varchar2)
+  as language java 
+  name 'db.office.spreadsheet.ReadContext.setDateStyles(int, java.lang.String)';
   
   function StAX_iterateContext(key in number, nrows in number) 
   return ExcelTableCellList
@@ -2572,6 +2545,78 @@ where t.id = :1
   
   end;
 
+  function OX_getDateStyles (
+    archive in t_archive
+  , doc     in t_exceldoc    
+  )
+  return dateXfMap_t
+  is
+    stylesPath    varchar2(260) := OX_getPathByType(doc, CT_STYLES);
+    stylesXml     xmltype; 
+    dateFmtMap    ExcelTypes.CT_NumFmtMap := ExcelTypes.getBuiltInDateFmts();
+    dtStyleMap    dateXfMap_t;
+    
+    dateFmtQuery  varchar2(32767) := q'{
+    select numFmtId, formatCode
+    from xmltable(
+           xmlnamespaces(default '$$DEFAULT_NS')
+         , '/styleSheet/numFmts/numFmt'
+           passing :1
+           columns numFmtId   number        path '@numFmtId'
+                 , formatCode varchar2(256) path '@formatCode'
+         )
+    where regexp_like(formatCode, '[ymdhs]')}';
+
+    xfQuery  varchar2(32767) := q'{
+    select id - 1 as xfId
+         , numFmtId
+    from xmltable(
+           xmlnamespaces(default '$$DEFAULT_NS')
+         , '/styleSheet/cellXfs/xf'
+           passing :1
+           columns id for ordinality
+                 , numFmtId number path '@numFmtId'
+                 , applyNumberFormat number path '@applyNumberFormat'
+         )
+    where applyNumberFormat = 1
+    }';
+         
+    rc            sys_refcursor;
+    defaultNs     varchar2(256) := get_prop('DEFAULT_NS', doc.is_strict);
+    numFmtId      pls_integer;
+    formatCode    varchar2(256);
+    xfId          pls_integer;
+         
+  begin
+  
+    if stylesPath is not null then
+      stylesXml := Zip_getXML(archive, stylesPath);
+      
+      open rc for replace(dateFmtQuery, '$$DEFAULT_NS', defaultNs) using stylesXml;
+      loop
+        fetch rc into numFmtId, formatCode;
+        exit when rc%notfound;
+        dateFmtMap(numFmtId) := ExcelTypes.makeNumFmt(numFmtId, formatCode);
+        debug(numFmtId||':'||formatCode);
+      end loop;
+      close rc;
+
+      open rc for replace(xfQuery, '$$DEFAULT_NS', defaultNs) using stylesXml;
+      loop
+        fetch rc into xfId, numFmtId;
+        exit when rc%notfound;
+        if dateFmtMap.exists(numFmtId) then
+          dtStyleMap(xfId) := dateFmtMap(numFmtId);
+          debug(xfId||':'||numFmtId);
+        end if;
+      end loop;
+      close rc;
+           
+    end if;
+    
+    return dtStyleMap;
+    
+  end;
 
   procedure OX_openWorkbook (
     archive in t_archive
@@ -2679,6 +2724,7 @@ where t.id = :1
   
     l_xldoc       t_exceldoc;
     l_sst         blob;
+    l_styles      blob;
     l_sheets      t_sheets;
     l_key         number;  
     l_read_method binary_integer := ctx_cache(ctx_id).read_method;
@@ -2687,6 +2733,22 @@ where t.id = :1
     l_end_row     pls_integer := l_tab_def.range.end_ref.r;
     
     documentSheetList     ExcelTableSheetList;
+    
+    function serializeDtStyles (dtStyles in dateXfMap_t) return varchar2 is
+      xfId    pls_integer := dtStyles.first;
+      output  varchar2(32767);
+      idx     pls_integer := 1;
+    begin
+      while xfId is not null loop
+        if idx > 1 then
+          output := output || ',';
+        end if;
+        output := output || xfId || ':' || case when dtStyles(xfId).isTimestamp then '1' else '0' end;
+        xfId := dtStyles.next(xfId);
+        idx := idx + 1;
+      end loop;
+      return output;
+    end;
     
   begin
     
@@ -2718,12 +2780,14 @@ where t.id = :1
     if l_xldoc.is_xlsb then
       
       l_sst := Zip_getEntry(archive, OX_getPathByType(l_xldoc, CT_SHAREDSTRINGS_BIN));
+      l_styles := Zip_getEntry(archive, OX_getPathByType(l_xldoc, CT_STYLES_BIN));
       
       l_key := xutl_xlsb.new_context(
         l_sst
       , get_column_list(l_tab_def)
       , l_start_row                
       , l_end_row
+      , l_styles
       );
       
       if dbms_lob.istemporary(l_sst) = 1 then
@@ -2741,6 +2805,7 @@ where t.id = :1
     
       ctx_cache(ctx_id).file_type := FILE_XLSX;
       ctx_cache(ctx_id).is_strict := l_xldoc.is_strict;
+      ctx_cache(ctx_id).dt_styles := OX_getDateStyles(archive, l_xldoc);
     
       case l_read_method 
       when DOM_READ then
@@ -2760,6 +2825,7 @@ where t.id = :1
                  );
                  
         StAX_setSharedStrings(l_key, l_sst);
+        StAX_setDateStyles(l_key, serializeDtStyles(ctx_cache(ctx_id).dt_styles));
         
         for i in 1 .. l_sheets.count loop
            StAX_addSheet(l_key, i, l_sheets(i).content, l_sheets(i).comments);
@@ -3176,7 +3242,6 @@ where t.id = :1
       end if;
       
     elsif is_xmlss(p_file) then
-      --error(UNIMPLEMENTED_FEAT, 'XML Spreadsheet 2003', p_code => -20720);
       XSS_openContent(p_file, p_sheet, p_ctx_id);
     else
       raise_application_error(-20720, INVALID_DOCUMENT);
@@ -3231,6 +3296,8 @@ where t.id = :1
     str         t_string_rec;
     empty_row   boolean;
     hasComment  boolean := ctx_cache(ctx_id).def_cache.hasComment;
+    dateXfMap   dateXfMap_t := ctx_cache(ctx_id).dt_styles;
+    num         number;
     
   begin
 
@@ -3248,6 +3315,7 @@ where t.id = :1
         info.cellRef := dbms_xslprocessor.valueOf(cell_node, '@r');
         info.cellCol := rtrim(info.cellRef, DIGITS);
         info.cellRow := ltrim(info.cellRef, LETTERS);
+        info.xfId := null;
         str := null;
         cell.cellData := null;
         
@@ -3264,14 +3332,28 @@ where t.id = :1
                     
           info.cellType := dbms_xslprocessor.valueOf(cell_node, '@t');
 
-          if info.cellType is null or info.cellType = 'n' then
-            if info.cellValue is not null then
-              cell.cellData := anydata.ConvertNumber(to_number(replace(info.cellValue,'.',get_decimal_sep)));
-            end if;
+          if info.cellType is null and info.cellValue is not null then
             
+            info.xfId := to_number(dbms_xslprocessor.valueOf(cell_node, '@s'));
+            num := to_number(replace(info.cellValue,'.',get_decimal_sep));
+            
+            if info.xfId is not null and dateXfMap.exists(info.xfId) then
+              if dateXfMap(info.xfId).isTimestamp then
+                cell.cellData := anydata.ConvertTimestamp(ExcelTypes.fromOADate(num, 3));
+              else
+                cell.cellData := anydata.ConvertDate(ExcelTypes.fromOADate(num));
+              end if;
+            else 
+              cell.cellData := anydata.ConvertNumber(num);
+            end if;
+          
           elsif info.cellType = 's' then
           
             str := get_string(ctx_id, info.cellValue);
+          
+          elsif info.cellType = 'n' and info.cellValue is not null then
+          
+            cell.cellData := anydata.ConvertNumber(to_number(replace(info.cellValue,'.',get_decimal_sep)));
           
           elsif info.cellType = 'd' then
           
@@ -4239,13 +4321,6 @@ where t.id = :1
         col_ref := cols(i).metadata.col_ref;
         datum := null;
         
-        /*
-        if cols(i).cell_meta = META_COMMENT then
-      
-          datum.str := get_comment(ctx_id, previous_sheet, col_ref || previous_row);
-          
-        els
-        */
         if cols(i).cell_meta = META_SHEET_INDEX then
         
           datum.num := ctx_cache(ctx_id).sheets(previous_sheet).idx;
@@ -4307,7 +4382,7 @@ where t.id = :1
         when dbms_types.TYPECODE_DATE then
           
           if datum.num is not null then
-            datum.dt := get_date_val(datum.num);
+            datum.dt := ExcelTypes.fromOADate(datum.num);
           elsif datum.str is not null then
             datum.dt := get_date_val(datum.str, cols(i).format);
           end if;
@@ -4316,7 +4391,7 @@ where t.id = :1
         when dbms_types.TYPECODE_TIMESTAMP then
           
           if datum.num is not null then
-            datum.ts := get_tstamp_val(datum.num);
+            datum.ts := ExcelTypes.fromOADate(datum.num, 3);
           elsif datum.str is not null then
             datum.ts := get_tstamp_val(datum.str, cols(i).format);
           end if;
