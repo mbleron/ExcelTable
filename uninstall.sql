@@ -22,6 +22,9 @@ drop type ExcelTableCellList;
 prompt Dropping type ExcelTableCell ...
 drop type ExcelTableCell;
 
+prompt Dropping type ExcelVariant ...
+drop type ExcelVariant force;
+
 prompt Dropping package XUTL_OFFCRYPTO ...
 drop package xutl_offcrypto;
 

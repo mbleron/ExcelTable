@@ -66,6 +66,8 @@ create or replace package ExcelTable is
     Marc Bleron       2021-02-12     Fix : wrong value for cells containing an empty 
                                            shared string
     Marc Bleron       2023-05-01     Added date style detection for raw cells
+    Marc Bleron       2023-09-08     Added NULL ON ERROR clause for data type conversion
+                                     Added VARIANT data type
 ====================================================================================== */
 
   -- Read methods  

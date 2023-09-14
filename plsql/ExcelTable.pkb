@@ -56,7 +56,9 @@ create or replace package body ExcelTable is
   INVALID_FILTER_TYPE    constant varchar2(100) := 'Invalid sheet filter type ''%s''';
   INVALID_DOCUMENT       constant varchar2(100) := 'Input file does not appear to be a valid Office document';
   INVALID_READ_METHOD    constant varchar2(100) := 'Invalid read method : %d';
-  --UNIMPLEMENTED_FEAT     constant varchar2(100) := 'Unimplemented feature : %s';
+  INVALID_DATE_VALUE     constant varchar2(100) := 'Invalid DATE value in cell %s : %s';
+  INVALID_TS_VALUE       constant varchar2(100) := 'Invalid TIMESTAMP value in cell %s : %s';
+  INVALID_NUMBER_VALUE   constant varchar2(100) := 'Invalid NUMBER value in cell %s : %s';
 
   FILE_XLSX              constant pls_integer := 0;
   FILE_XLSB              constant pls_integer := 1;
@@ -149,6 +151,7 @@ create or replace package body ExcelTable is
   , default_value  anydata default null
   , is_positional  boolean default false
   , position       QI_position_t
+  , null_on_error  boolean default false
   );
   
   type QI_column_list_t is table of QI_column_t;
@@ -1793,6 +1796,11 @@ create or replace package body ExcelTable is
           end if;      
           expect(T_RIGHT);
         end if;
+        if accept(T_NAME, 'NULL') then
+          expect(T_NAME, 'ON');
+          expect(T_NAME, 'ERROR');
+          col.null_on_error := true;
+        end if;
         -- check precision and scale against allowed ranges
         if col.metadata.prec not between 1 and 38 then
           raise precision_out_of_range;
@@ -1833,6 +1841,11 @@ create or replace package body ExcelTable is
           expect(T_STRING);
           col.format := strval;
         end if;
+        if accept(T_NAME, 'NULL') then
+          expect(T_NAME, 'ON');
+          expect(T_NAME, 'ERROR');
+          col.null_on_error := true;
+        end if;
         
       elsif accept(T_NAME, 'TIMESTAMP') then
         col.metadata.typecode := dbms_types.TYPECODE_TIMESTAMP;
@@ -1851,11 +1864,24 @@ create or replace package body ExcelTable is
           expect(T_STRING);
           col.format := strval;
         end if;        
+        if accept(T_NAME, 'NULL') then
+          expect(T_NAME, 'ON');
+          expect(T_NAME, 'ERROR');
+          col.null_on_error := true;
+        end if;
         
       elsif accept(T_NAME, 'CLOB') then
         col.metadata.typecode := dbms_types.TYPECODE_CLOB;
         col.metadata.csid := DB_CSID;
         col.metadata.csfrm := 1;
+
+      elsif accept(T_NAME, 'VARIANT') then
+        col.metadata.typecode := dbms_types.TYPECODE_OBJECT;
+        $IF DBMS_DB_VERSION.VERSION < 19 $THEN
+        col.metadata.attr_elt_type := anytype.GetPersistent($$PLSQL_UNIT_OWNER,'EXCELVARIANT');
+        $ELSE
+        col.metadata.attr_elt_type := GetAnytypeFromPersistent($$PLSQL_UNIT_OWNER,'EXCELVARIANT');
+        $END
                 
       elsif accept(T_NAME, 'FOR') then
         expect(T_NAME, 'ORDINALITY');
@@ -1879,8 +1905,7 @@ create or replace package body ExcelTable is
           col.metadata.col_ref := strval;
         else
           error(EMPTY_COL_REF, col.metadata.aname);
-        end if;   
-      --end if;
+        end if;
       
       -- position
       elsif accept(T_NAME, 'POSITION') then
@@ -4031,6 +4056,7 @@ where t.id = :1
       , l_tdef.cols(i).metadata.len
       , l_tdef.cols(i).metadata.csid
       , l_tdef.cols(i).metadata.csfrm
+      , l_tdef.cols(i).metadata.attr_elt_type 
       );
 
     end loop;
@@ -4286,7 +4312,7 @@ where t.id = :1
     procedure set_datum is
     begin
       if datum.val is not null then
-        case datum.val.GetTypeName() 
+        case datum.val.GetTypeName()
         when 'SYS.VARCHAR2' then
           datum.str := datum.val.AccessVarchar2();
         when 'SYS.CHAR' then
@@ -4297,13 +4323,10 @@ where t.id = :1
           datum.num := to_number(datum.val.AccessBDouble());
         when 'SYS.DATE' then
           datum.dt := datum.val.AccessDate();
-          datum.ts := cast(datum.dt as timestamp);
         when 'SYS.CLOB' then
           datum.lob := datum.val.AccessClob();
         when 'SYS.TIMESTAMP' then
           datum.ts := datum.val.AccessTimestamp();
-          --datum.dt := cast(datum.ts as date);
-          datum.dt := cast(datum.ts + numtodsinterval(round(extract(second from datum.ts)) - extract(second from datum.ts), 'second') as date);
         end case;
       end if;
     end;
@@ -4355,6 +4378,10 @@ where t.id = :1
           
           if datum.num is not null then
             datum.str := to_char(datum.num);
+          elsif datum.dt is not null then
+            datum.str := to_char(datum.dt, get_date_format);
+          elsif datum.ts is not null then
+            datum.str := to_char(datum.ts, get_timestamp_format);
           elsif datum.lob is not null then
             datum.str := dbms_lob.substr(datum.lob, LOB_CHUNK_SIZE);
           end if;
@@ -4366,14 +4393,24 @@ where t.id = :1
           if cols(i).for_ordinality then
             datum.num := r_num;
           elsif datum.str is not null then           
-            datum.num := to_number(replace(datum.str,'.',get_decimal_sep));
+            begin
+              if cols(i).format is not null then
+                datum.num := to_number(datum.str, cols(i).format);
+              else
+                datum.num := to_number(datum.str);
+              end if;
+            exception
+              when others then
+                if not cols(i).null_on_error then
+                  error(INVALID_NUMBER_VALUE, col_ref||to_char(previous_row), datum.str);
+                end if;
+            end;
           end if;
           l_scale := cols(i).metadata.scale;
           if l_scale is not null then 
             datum.num := round(datum.num, l_scale);
           end if;
           l_prec := cols(i).metadata.prec;
-          --if l_prec is not null and log(10, datum.num) >= l_prec-l_scale then
           if l_prec is not null and abs(datum.num) >= cols(i).metadata.max_value then
             raise value_out_of_range;
           end if;
@@ -4384,7 +4421,17 @@ where t.id = :1
           if datum.num is not null then
             datum.dt := ExcelTypes.fromOADate(datum.num);
           elsif datum.str is not null then
-            datum.dt := get_date_val(datum.str, cols(i).format);
+            begin
+              datum.dt := get_date_val(datum.str, cols(i).format);
+            exception
+              when others then
+                if not cols(i).null_on_error then
+                  error(INVALID_DATE_VALUE, col_ref||to_char(previous_row), datum.str);
+                end if; 
+            end;
+          elsif datum.ts is not null then
+            -- timestamp to date conversion with rounding to the nearest second
+            datum.dt := cast(datum.ts + numtodsinterval(round(extract(second from datum.ts)) - extract(second from datum.ts), 'second') as date);
           end if;
           rws.SetDate(datum.dt);
           
@@ -4392,8 +4439,17 @@ where t.id = :1
           
           if datum.num is not null then
             datum.ts := ExcelTypes.fromOADate(datum.num, 3);
-          elsif datum.str is not null then
-            datum.ts := get_tstamp_val(datum.str, cols(i).format);
+          elsif datum.dt is not null then
+            datum.ts := cast(datum.dt as timestamp);
+          elsif datum.str is not null then           
+            begin
+              datum.ts := get_tstamp_val(datum.str, cols(i).format);
+            exception
+              when others then
+                if not cols(i).null_on_error then
+                  error(INVALID_TS_VALUE, col_ref||to_char(previous_row), datum.str);
+                end if; 
+            end;
           end if;
           rws.SetTimestamp(datum.ts);
             
@@ -4403,6 +4459,10 @@ where t.id = :1
             datum.lob := to_clob(datum.str);
           end if;
           rws.SetClob(datum.lob);
+        
+        when dbms_types.TYPECODE_OBJECT then
+          
+          rws.SetObject(ExcelVariant(datum.val));
           
         end case;
           

@@ -14,8 +14,8 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
   * [Columns syntax specification](#columns-syntax-specification)
   * [Range syntax specification](#range-syntax-specification)
   * [Cryptographic features overview](#cryptographic-features-overview)
-  * [Examples](#examples)
-* [CHANGELOG](#changelog)  
+  * [Examples](#examples-1)
+* [Copyright and license](#copyright-and-license)  
 
 
 ## What's New in...
@@ -46,6 +46,8 @@ It is primarily implemented in PL/SQL using an object type (for the ODCI routine
 > Version 2.1 : ExcelTable can read .xlsb files.
 
 > Version 2.0 : ExcelTable can read old 97-2003 Excel files (.xls).
+
+([Change Log](./CHANGELOG.md))
 
 ## Bug tracker
 
@@ -687,40 +689,59 @@ end;
 ```
 ---
 ## 
-#### Columns syntax specification
+### Columns syntax specification
 
 
-![Column expression syntax diagram](./resources/diagram_column_expr.png "Column expression syntax diagram")
+![Column expression syntax diagram](./resources/diagram-column-expr.svg "Column expression syntax diagram")
 
-_Ref_clause::=_  
+[_Format_clause::=_](#format-clause)  
 
-![Column reference syntax diagram](./resources/diagram_column_ref.png "Column reference syntax diagram")
+![Column metadata syntax diagram](./resources/diagram-column-format.svg "Column metadata syntax diagram")
 
-_Metadata_clause::=_  
+[_Ref_clause::=_](#reference-clause)  
 
-![Column metadata syntax diagram](./resources/diagram_column_metadata.png "Column metadata syntax diagram")
+![Column reference syntax diagram](./resources/diagram-column-ref.svg "Column reference syntax diagram")
 
+[_Metadata_clause::=_](#for-metadata-clause)  
+
+![Column metadata syntax diagram](./resources/diagram-column-metadata.svg "Column metadata syntax diagram")
 
 Column names must be declared using a quoted identifier.
 
 Supported data types are :
 
-* NUMBER - with optional precision and scale specs.
+Data type|Comments
+---|---
+NUMBER|Supports optional precision and scale specs.
+VARCHAR2|Supports CHAR/BYTE semantics.<br/> Values larger than the maximum length declared are silently truncated and no error is reported.
+DATE|Supports an optional format mask.<br/> The format mask is used if the value is stored as text in the spreadsheet, otherwise the date value is assumed to be stored as date in Excel's internal serial format.
+TIMESTAMP|Supports optional scale and format mask specifications.<br/> The format mask is used if the value is stored as text in the spreadsheet, otherwise the timestamp value is assumed to be stored in Excel's internal serial format.
+CLOB|Use this type to access strings larger than the maximum VARCHAR2 size in SQL (4000 or 32767 bytes if the extension is enabled).  
+VARIANT|A virtual data type mapping to user-defined object [EXCELVARIANT](./ExcelCommons/plsql/ExcelVariant.tps).<br/> This object is designed to hold and access data of different types in the same relational column, as they may exist in the source spreadsheet column.<br/> The available object methods `getNumber`, `getString`, `getDate`, `getTimestamp` and `getClob` follow the conversion rules explained in [Format clause](#format-clause).  
 
-* VARCHAR2 - including CHAR/BYTE semantics. Values larger than the maximum length declared are silently truncated and no error is reported.
 
-* DATE - with optional format mask. The format mask is used if the value is stored as text in the spreadsheet, otherwise the date value is assumed to be stored as date in Excel's internal serial format.
+#### Format clause
+Use this clause to specify a conversion format to NUMBER, DATE or TIMESTAMP data types when source data is stored as text. If the format is omitted, an implicit conversion will still be attempted based on the current session NLS settings (see conversion matrix below).  
+Should the conversion fail, the resulting error may be caught by specifying an additional NULL ON ERROR clause.  
 
-* TIMESTAMP - with optional scale and format mask specifications. The format mask is used if the value is stored as text in the spreadsheet, otherwise the timestamp value is assumed to be stored in Excel's internal serial format.
+&ShortDownArrow; from \ to &rightarrow;</sup>|NUMBER|VARCHAR2|DATE|TIMESTAMP|CLOB
+---|:---:|:---:|:---:|:---:|:---:
+number|&#x2713;|&#x2713; &#x207D;&sup1;&#x207E;|||
+text|&#x2713; &#x207D;&sup1;&#x207E;|&#x2713;|&#x2713; &#x207D;&sup1;&#x207E;|&#x2713; &#x207D;&sup1;&#x207E;|&#x2713;
+date/time||&#x2713; &#x207D;&sup1;&#x207E;|&#x2713;|&#x2713;|
 
-* CLOB
+*(1) Explicit or implicit conversion using given format mask or NLS settings.*
 
-A special "FOR ORDINALITY" clause (like XMLTABLE or JSON_TABLE's one) is also available to autogenerate a sequence number.
+#### FOR ORDINALITY clause
+This clause is similar to built-in XMLTABLE and JSON_TABLE ones, and may be used to autogenerate a sequence number.
 
-The reference clause is optional and consists in either : 
+#### Reference clause 
+This clause is optional and consists in either : 
+
 * a column reference to explicitly target a named column in the spreadsheet (or delimited flat file), instead of relying on the declaration order (relative to the range). Positional and named column definitions cannot be mixed.
 * a field position reference (for positional flat files) specifying start and end offsets of the field in a row of data. Offsets are 1-based and must be specified in character unit.
 
+#### FOR METADATA clause
 ExcelTable can also extract additional cell and sheet metadata via the `FOR METADATA ()` clause, and project them as regular columns.  
 Available metadata are :  
 * Cell comment : `FOR METADATA (COMMENT)`  
@@ -728,14 +749,14 @@ Available metadata are :
 * Sheet index (1-based) : `FOR METADATA (SHEET_INDEX)`
 
 
-Examples :
+#### Examples
 
 ```
   "RN"    for ordinality
 , "COL1"  number
 , "COL2"  varchar2(10)
 , "COL3"  varchar2(4000)
-, "COL4"  date           format 'YYYY-MM-DD'
+, "COL4"  date           format 'YYYY-MM-DD'  null on error
 , "COL5"  number(10,2)
 , "COL6"  varchar2(5)
 , "COL7"  timestamp(3)   format 'YYYY-MM-DD HH24:MI:SS.FF'
@@ -762,7 +783,7 @@ Examples :
 ```
 
 ## 
-#### Range syntax specification
+### Range syntax specification
 
 There are four ways to specify the table range :
 
@@ -774,7 +795,7 @@ There are four ways to specify the table range :
 > If the range is empty, the table implicitly starts at cell A1.
 
 ## 
-#### Cryptographic features overview
+### Cryptographic features overview
 
 By default, Office 97-2003 password-protected files use RC4 encryption.  
 Latest versions (2007+) based on [ECMA-376](http://www.ecma-international.org/publications/standards/Ecma-376.htm) standard use AES encryption : 
@@ -1333,121 +1354,31 @@ FROM Table(
 ;
 ```
 
-## CHANGELOG
+* Error handling and VARIANT data type ([test_on_error.xlsx](./samples/test_on_error.xlsx))
 
-### 5.3 (2023-05-23)
-
-* Enhancement : Date type detection
-
-### 5.2.2 (2021-08-20)
-* Enhancement : issue #34
-
-### 5.2.1 (2021-08-09)
-* Fix : issue #33
-
-### 5.2.0 (2021-07-13)
-* Enhancements :
-  * added isReadMethodAvailable function
-  * added default parameter p_method to getSheets function (backwards compatible)
-
-### 5.1.1 (2021-02-12)
-* Fix : issue #26
-
-### 5.1 (2020-04-17)
-
-* Enhancements :
-	* added getSheets function
-	* documentation links updated for procedure loadData
-	* documentation for mapColumn mentions now that the column name is case sensitive
-
-### 5.0 (2020-03-25)
-* Fix : issue #18 
-* Enhancements : 
-  * issue #19
-  * Support for strict OOXML documents  
-  * Streaming read method for ODF files  
-  * Raw cells listing
-
-### 4.0.1 (2019-09-29)
-* Fix : issue #14
-* Enhancement : issue #15
-
-### 4.0 (2019-09-22)
-* Added support for delimited and positional flat files
-* Fix : issue #12
-* Fix : issue #13
-
-### 3.2.1 (2019-05-14)
-* Fix : requested rows count wrongly decremented for empty row
-* Fix : getCursor() failure with multi-sheet support
-
-### 3.2 (2019-05-01)
-* Added support for XML spreadsheetML files (.xml)
-
-### 3.1 (2019-04-20)
-* New default value feature in DML API
-
-### 3.0 (2019-03-30)
-* Multi-sheet support
-
-### 2.3.2 (2018-10-22)
-* XUTL_XLS enhancement (new buffered lob reader)
-
-### 2.3.1 (2018-09-15)
-* XUTL_XLS enhancement
-
-### 2.3 (2018-08-23)
-* New API for DML operations
-* Internal modularization, unified interface for cell sources
-
-### 2.2 (2018-07-07)
-* Added support for OpenDocument (ODF) spreadsheets (.ods), including encrypted files
-* Added support for TIMESTAMP data type
-
-### 2.1 (2018-04-22)
-* Added support for Excel Binary File Format (.xlsb)
-
-### 2.0 (2018-04-01)
-* Added support for Excel 97-2003 files (.xls)
-
-### 1.6.1 (2018-03-17)
-* Added large strings support for versions prior 11.2.0.2 
-
-### 1.6 (2017-12-31)
-
-* Added cell comments extraction
-* Internal modularization
-
-### 1.5 (2017-07-10)
-
-* Fixed bug related to zip archives created with data descriptors. Now reading CRC-32, compressed and uncompressed sizes directly from Central Directory entries.
-* Removed dependency to V$PARAMETER view (thanks [Paul](https://paulzipblog.wordpress.com/) for the suggestion)
-
-### 1.4 (2017-06-11)
-
-* Added getCursor() function
-* Fixed NullPointerException when using streaming method and file has no sharedStrings
-
-### 1.3 (2017-05-30)
-
-* Added support for password-encrypted files
-* Fixed minor bugs
-
-### 1.2 (2016-10-30)
-
-* Added new streaming read method
-* Added setFetchSize() procedure
-
-### 1.1 (2016-06-25)
-
-* Added internal collection and LOB freeing
-
-### 1.0 (2016-05-01)
-
-* Creation
-
-
+```sql
+SELECT t.id
+     , t.string_value
+     , t.date_value.getDate(nullOnError => 1) as date_value
+     , t.timestamp_value
+     , t.number_value
+FROM Table(
+       ExcelTable.getRows(
+         ExcelTable.getFile('TEST_DIR','test_on_error.xlsx')
+       , 'data'
+       , q'{
+           "ID"               number(2)
+         , "STRING_VALUE"     varchar2(2000)
+         , "DATE_VALUE"       variant
+         , "TIMESTAMP_VALUE"  timestamp  NULL ON ERROR
+         , "NUMBER_VALUE"     number     NULL ON ERROR
+         }'
+       , 'A2'
+       )
+     ) t
+;
+```
 
 ## Copyright and license
 
-Copyright 2016-2021 Marc Bleron. Released under MIT license.
+Copyright 2016-2023 Marc Bleron. Released under MIT license.
