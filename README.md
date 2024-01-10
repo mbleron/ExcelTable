@@ -1381,4 +1381,4 @@ FROM Table(
 
 ## Copyright and license
 
-Copyright 2016-2023 Marc Bleron. Released under MIT license.
+Copyright 2016-2024 Marc Bleron. Released under MIT license.

@@ -677,6 +677,12 @@ create or replace package body ExcelTable is
       when dbms_types.TYPECODE_CLOB then
         col.metadata.csid := DB_CSID;
         col.metadata.csfrm := 1;
+      when dbms_types.TYPECODE_OBJECT then
+        $IF DBMS_DB_VERSION.VERSION < 19 $THEN
+        col.metadata.attr_elt_type := anytype.GetPersistent($$PLSQL_UNIT_OWNER,'EXCELVARIANT');
+        $ELSE
+        col.metadata.attr_elt_type := GetAnytypeFromPersistent($$PLSQL_UNIT_OWNER,'EXCELVARIANT');
+        $END
       else
         null;
       end case;

@@ -1,6 +1,11 @@
 
 # Change Log
 
+## [5.4.1] - 2024-01-10
+
+### Fixed
+* Missing VARIANT case while parsing a compiled table definition
+
 ## [5.4] - 2023-09-14
 
 ### Added
@@ -8,8 +13,6 @@
 * Documentation: new SVG syntax diagrams
 * Error handling for heterogeneous data (issue #45)
 * New "VARIANT" object type in SQL projection
-
-###
 
 ## [5.3] - 2023-05-23
 
