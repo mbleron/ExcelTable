@@ -79,6 +79,17 @@ The owner requires the CREATE TABLE privilege in this case :
 ```sql
 grant create table to <user>;
 ```
+---
+The schema into which ExcelTable is installed requires at least the privileges to create sessions, procedures and types:
+```sql
+grant
+   create session,
+   create procedure,
+   create type
+to
+   <user>;
+```
+
 ---  
 In order to read encrypted files, the interface requires access to the DBMS_CRYPTO API (see PL/SQL section below).  
 The owner must therefore be granted EXECUTE privilege on it : 
