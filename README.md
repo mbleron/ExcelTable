@@ -80,7 +80,7 @@ The owner requires the CREATE TABLE privilege in this case :
 grant create table to <user>;
 ```
 ---
-The schema into which ExcelTable is installed requires at least the privilegess to create sessions, procedures and types:
+The schema into which ExcelTable is installed requires at least the privileges to create sessions, procedures and types:
 ```sql
 grant
    create session,
